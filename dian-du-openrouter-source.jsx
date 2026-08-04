@@ -399,7 +399,7 @@ export default function App() {
   const [shadow, setShadow] = useState({ on: false, idx: 0, slow: false, waiting: false });
   const [rev, setRev] = useState(null);                 // {queue,i,flip,ok,ng}
 
-  const [prefs, setPrefs] = useState({ theme: "paper", font: "serif", size: 19, voiceURI: "", rate: 1 });
+  const [prefs, setPrefs] = useState({ theme: "paper", font: "serif", size: 19, voiceURI: "", rate: 1, dictOff: false });
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [apiKey, setApiKey] = useState(() => { try { return localStorage.getItem(APIKEY_STORE) || ""; } catch (e) { return ""; } });
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_STORE) || DEFAULT_MODEL; } catch (e) { return DEFAULT_MODEL; } });
@@ -727,13 +727,26 @@ export default function App() {
   }
 
   /* ---- 查词 ---- */
+
+  /* 词典面板的开合。桌面端用 prefs.dictOff 记住"用户主动收起"，收起后正文占满整幅；
+     移动端仍只看 dictOpen（底部抽屉），CSS 上用媒体查询隔开，两边互不影响。
+     任何一次查词都会自动把面板重新展开——点了词却看不到释义是说不通的。 */
+  function openDict() {
+    setDictOpen(true);
+    setPrefs((p) => (p.dictOff ? { ...p, dictOff: false } : p));
+  }
+  function closeDict() {
+    setDictOpen(false);
+    setPrefs((p) => ({ ...p, dictOff: true }));
+  }
+
   async function lookup(term, sentence, key) {
     const q = (term || "").trim();
     if (!q) return;
     if (looksLikeSentence(q)) { translateText(q); return; }
     lastLookupRef.current = [term, sentence, key];
     setDict({ status: "loading", term: q, key, sent: sentence });
-    setDictOpen(true);
+    openDict();
     if (/^[a-zA-Z]/.test(q)) clickedRef.current.add(q.toLowerCase());
 
     const cacheKey = q.toLowerCase() + "||" + (sentence || "");
@@ -800,7 +813,7 @@ senses 按常用程度排列，最多 4 条；examples 恰好 2 条且包含查�
     setSelTip(null);
     const short = text.length > 16 ? text.slice(0, 16) + "…" : text;
     setDict({ status: "loading", term: short, trMode: true });
-    setDictOpen(true);
+    openDict();
     const cacheKey = "T||" + text;
     if (cacheRef.current.has(cacheKey)) {
       setDict({ status: "ok", term: short, data: cacheRef.current.get(cacheKey) });
@@ -878,7 +891,7 @@ words 按相关度最多给 5 个；如果回答里没有值得收藏的词就�
     const s = (sentence || "").trim();
     if (!s) return;
     setDict({ status: "loading", term: "整句解析", sentMode: true });
-    setDictOpen(true);
+    openDict();
     const cacheKey = "S||" + s;
     if (cacheRef.current.has(cacheKey)) {
       setDict({ status: "ok", term: s, data: cacheRef.current.get(cacheKey) });
@@ -1405,7 +1418,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                   ><KeyRound size={14} /> 更换 Key / 模型</button>
                 </div>
                 <button className="pop-reset"
-                  onClick={() => setPrefs({ theme: "paper", font: "serif", size: 19, voiceURI: "", rate: 1 })}
+                  onClick={() => setPrefs({ theme: "paper", font: "serif", size: 19, voiceURI: "", rate: 1, dictOff: false })}
                 >恢复默认外观</button>
               </div>
               </>
@@ -1414,7 +1427,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
         </div>
       </header>
 
-      <main className="layout">
+      <main className={prefs.dictOff ? "layout nodict" : "layout"}>
         {/* ======= 左：主区域 ======= */}
         <section className="mainc">
           {view === "review" ? (
@@ -1760,7 +1773,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
         {/* ======= 右：词典面板 ======= */}
         <aside className={dictOpen ? "dictwrap open" : "dictwrap"}>
           <div className="dict">
-            <button className="dict-close" onClick={() => setDictOpen(false)} aria-label="关闭">
+            <button className="dict-close" onClick={closeDict} aria-label="收起词典">
               <X size={16} />
             </button>
 
@@ -1842,7 +1855,8 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
       </main>
 
       {!dictOpen && (
-        <button className="dict-fab" onClick={() => setDictOpen(true)} aria-label="打开词典">
+        <button className={prefs.dictOff ? "dict-fab show" : "dict-fab"}
+          onClick={openDict} aria-label="打开词典">
           <Search size={18} />
         </button>
       )}
@@ -2848,7 +2862,7 @@ button:disabled{opacity:.55;cursor:default}
 .dictwrap{position:sticky;top:78px}
 .dict{background:var(--card);border:none;border-radius:18px;padding:20px;
   max-height:calc(100vh - 110px);overflow:auto;box-shadow:0 4px 22px rgba(28,43,69,.08)}
-.dict-close{display:none;position:absolute;top:10px;right:12px;color:var(--mut);
+.dict-close{display:flex;position:absolute;top:10px;right:12px;color:var(--mut);
   background:var(--line2);border-radius:99px;padding:6px}
 .dsearch{display:flex;align-items:center;gap:8px;border-bottom:1.5px solid var(--line);
   padding:2px 2px 9px;margin-bottom:14px;color:var(--mut)}
@@ -3129,6 +3143,14 @@ button.vb-w:hover{color:var(--blue)}
 .setup-acts{display:flex;gap:10px;margin-top:20px}
 .danger-t{color:var(--bad)}
 .danger-t:hover{background:var(--bad-bg)}
+
+/* ---- 桌面端：手动收起词典 ----
+   880px 以上才生效，正好和下面的移动端断点错开，收起状态不会波及手机的抽屉。 */
+@media (min-width:881px){
+  .layout.nodict{grid-template-columns:minmax(0,1fr)}
+  .layout.nodict .dictwrap{display:none}
+  .dict-fab.show{display:flex}
+}
 
 /* ---- 移动端 ---- */
 @media (max-width:880px){
