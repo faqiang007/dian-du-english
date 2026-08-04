@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>007学英语 · 诊断</title>
+<style>
+body{font-family:-apple-system,'PingFang SC',sans-serif;max-width:820px;margin:40px auto;padding:0 20px;line-height:1.7;color:#1C2B45;background:#FCFBF7}
+h1{font-size:20px} h2{font-size:15px;margin-top:26px;border-bottom:1px solid #E7E5DC;padding-bottom:6px}
+pre{background:#F7F5EE;padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
+.ok{color:#2E7D5B;font-weight:700} .bad{color:#B5432F;font-weight:700} .mut{color:#8B94A6}
+button{background:#2F5AA8;color:#fff;border:none;padding:10px 20px;border-radius:6px;font-size:14px;cursor:pointer}
+input{padding:8px;border:1px solid #E7E5DC;border-radius:6px;font-size:14px;width:320px}
+</style></head><body>
+<h1>007学英语 · 连接诊断</h1>
+<p class="mut">这个页面会读取应用已保存的设置，实际调用一次 OpenRouter，把原始返回完整显示出来。<br>
+API Key 只在本机使用，页面上只显示头尾几位。</p>
+
+<h2>1. 当前设置</h2>
+<div id="cfg">读取中…</div>
+
+<h2>2. 测试模型</h2>
+<p><input id="m" placeholder="模型 ID"> <button onclick="run()">开始测试</button></p>
+<p class="mut">留空则用应用当前设置的模型。想对比就分别填 <code>deepseek/deepseek-chat</code> 和 <code>anthropic/claude-sonnet-4.6</code> 各测一次。</p>
+
+<h2>3. 结果</h2>
+<div id="out" class="mut">点上面的按钮开始</div>
+
+<script>
+var KEY="dd-or-key", MODEL="dd-or-model";
+var key="", model="";
+try{ key=localStorage.getItem(KEY)||""; }catch(e){}
+try{ model=localStorage.getItem(MODEL)||""; }catch(e){}
+try{ model=JSON.parse(model); }catch(e){}
+if(typeof model!=="string") model="";
+
+function mask(k){ if(!k) return "(空)"; if(k.length<14) return k.slice(0,4)+"…("+k.length+"位，偏短)"; return k.slice(0,10)+"…"+k.slice(-4)+"  共"+k.length+"位"; }
+
+document.getElementById("cfg").innerHTML =
+  "<pre>API Key : "+mask(key)+"\n"+
+  "格式检查: "+(key.indexOf("sk-or-")===0?"<span class='ok'>✓ 以 sk-or- 开头</span>":"<span class='bad'>✗ 不是以 sk-or- 开头</span>")+"\n"+
+  "当前模型: "+(model||"(未设置，应用会用默认 anthropic/claude-sonnet-4.6)")+"</pre>";
+document.getElementById("m").value = model || "anthropic/claude-sonnet-4.6";
+
+async function run(){
+  var out=document.getElementById("out");
+  var mm=document.getElementById("m").value.trim()||model||"anthropic/claude-sonnet-4.6";
+  if(!key){ out.innerHTML="<pre class='bad'>没读到 API Key。请先在应用里填好 Key，再回到这个页面。</pre>"; return; }
+  out.innerHTML="<pre>正在请求 "+mm+" …</pre>";
+  var res, raw, status;
+  try{
+    res = await fetch("https://openrouter.ai/api/v1/chat/completions",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"X-Title":"007 English Reader"},
+      body: JSON.stringify({model:mm,messages:[{role:"user",content:'只返回JSON，不要任何其他文字：{"ok":1,"msg":"hello"}'}]})
+    });
+    status = res.status;
+    raw = await res.text();
+  }catch(e){
+    out.innerHTML="<pre class='bad'>请求根本没发出去（fetch 抛异常）\n"+e.name+": "+e.message+"</pre>";
+    return;
+  }
+  var html = "<pre>HTTP 状态码: <b>"+status+"</b>\n\n===== 原始返回 =====\n"+
+             raw.slice(0,2500).replace(/</g,"&lt;")+"</pre>";
+  var diag="";
+  if(status===401) diag="<p class='bad'>→ 401：API Key 无效或被拒。</p>";
+  else if(status===402) diag="<p class='bad'>→ 402：账户余额不足。DeepSeek 有免费额度所以能用，Claude 是付费的，需要去 openrouter.ai 的 Credits 页面充值。</p>";
+  else if(status===403) diag="<p class='bad'>→ 403：这个 Key 没有调用该模型的权限，或账户的数据策略（Privacy）设置挡住了。去 openrouter.ai/settings/privacy 看看。</p>";
+  else if(status===429) diag="<p class='bad'>→ 429：请求过于频繁，或免费额度已用尽。</p>";
+  else if(status===200){
+    try{
+      var d=JSON.parse(raw);
+      var c=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:undefined;
+      diag="<p>content 的类型: <b>"+(Array.isArray(c)?"数组":typeof c)+"</b></p>";
+      if(typeof c!=="string"){
+        diag+="<p class='bad'>→ 找到问题了：应用里的代码假设 content 是字符串，直接调用 .replace()。这里不是字符串，会抛异常，被误报成「出了点问题，重试一下」。</p>";
+      }else{
+        var clean=c.replace(/```json|```/g,"").trim();
+        var s=clean.indexOf("{"), e2=clean.lastIndexOf("}");
+        if(s===-1||e2===-1){ diag+="<p class='bad'>→ 返回里找不到 JSON，应用会报「出了点问题」。</p>"; }
+        else{
+          try{ JSON.parse(clean.slice(s,e2+1)); diag+="<p class='ok'>→ 这个模型工作正常，JSON 能解析。</p>"; }
+          catch(er){ diag+="<p class='bad'>→ JSON 解析失败: "+er.message+"</p>"; }
+        }
+      }
+    }catch(er){ diag="<p class='bad'>→ 返回不是合法 JSON: "+er.message+"</p>"; }
+  }
+  out.innerHTML = diag + html;
+}
+</script></body></html>
