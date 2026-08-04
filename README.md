@@ -210,4 +210,4 @@ curl "http://ip-api.com/json/?fields=hosting,country,isp"
 
 ## 许可
 
-尚未指定。如果打算让别人使用或修改，建议补一个 `LICENSE` 文件（个人项目通常选 MIT）。
+[MIT](LICENSE) —— 可自由使用、修改、分发，包括商用，只需保留版权声明。作者不承担任何担保责任。
