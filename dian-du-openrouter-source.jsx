@@ -39,7 +39,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Search, Sparkles, Volume2, Plus, Check, X, RefreshCw,
   Play, Square, Dices, Trash2, Copy, Loader2, BookOpen,
-  Brain, BarChart3, Puzzle, Clapperboard, ClipboardCheck,
+  Brain, BarChart3, Puzzle, ClipboardCheck,
   ChevronLeft, ChevronRight, RotateCcw, Turtle, Flame,
   Languages, Palette, Upload, Download, FileUp, ChevronDown, MoreHorizontal,
   KeyRound, Settings, Bookmark, Menu, Globe, ExternalLink
@@ -152,16 +152,6 @@ const TOPIC_CATS = [
     "为什么图书馆要保持安静", "路牌字体的讲究",
     "一门语言消失的过程", "为什么有些歌全世界都会哼",
     "手写信正在消失吗", "城市广场的功能变迁", "颜色在不同文化里的含义" ] },
-  { id: "creator", name: "创作素材", pool: [
-    "为什么人们相信自己愿意相信的", "损失厌恶：怕失去大于想得到",
-    "从众心理：人多的地方更安全吗", "稀缺感如何让人冲动下单",
-    "讲故事为什么比讲道理有效", "第一印象的心理学",
-    "为什么坏消息传播更快", "峰终定律：人如何记住一段体验",
-    "多巴胺与刷不停的手指", "承诺一致性：小请求变成大让步",
-    "光环效应：好看的人更可信吗", "为什么短视频让人上瘾",
-    "锚定效应：第一个数字定基调", "沉没成本让人放不下手",
-    "框架效应：换个说法结论就变了", "为什么人高估自己的判断",
-    "社会认同：评论区如何左右选择", "好奇心缺口：话说一半的力量" ] },
 ];
 
 function catOf(id) {
@@ -756,7 +746,6 @@ export default function App() {
     setTabs((ts) => ts.map((x) => (x.id === article.id ? { ...x, ch: n } : x)));
     // 换章等于换了篇文章，小测和译文开关都得归零
     setQuiz({ st: "idle" });
-    setIdeas({ st: "idle" });
     setShowTrans(false);
     clickedRef.current = new Set();
     window.scrollTo({ top: 0 });
@@ -805,7 +794,6 @@ export default function App() {
   const [confirmClear, setConfirmClear] = useState(false);
 
   const [quiz, setQuiz] = useState({ st: "idle" });     // idle|loading|on|done|err
-  const [ideas, setIdeas] = useState({ st: "idle" });   // idle|loading|ok|err
   const [shadow, setShadow] = useState({ on: false, idx: 0, slow: false, waiting: false });
   const [rev, setRev] = useState(null);                 // {queue,i,flip,ok,ng}
 
@@ -1138,7 +1126,6 @@ export default function App() {
       setLevel(theLevel);
       setView("read");
       setQuiz({ st: "idle" });
-      setIdeas({ st: "idle" });
       setShowTrans(false);
       clickedRef.current = new Set();
       setStats((s) => {
@@ -1424,26 +1411,6 @@ ${curText}
     setQuiz({ st: "done", qs: quiz.qs, score: quiz.score, adj });
   }
 
-  /* ---- 提炼选题 ---- */
-  async function startIdeas() {
-    if (!article || ideas.st === "loading") return;
-    setIdeas({ st: "loading" });
-    const prompt = `你是短视频爆款选题策划，擅长"人性、心理、传播"角度。基于下面这篇英文文章的内容，为中文短视频创作者提炼 3 个选题。
-
-文章《${article.title}》：
-${curText}
-
-只返回 JSON，不要任何其他文字或 markdown 代码块：
-{"ideas":[{"t":"选题标题（有钩子感，15字以内）","a":"一句话切入角度"}]}`;
-    try {
-      const data = await callClaude(prompt, apiKey, model, null, providerId);
-      if (!Array.isArray(data.ideas) || !data.ideas.length) throw new Error("bad");
-      setIdeas({ st: "ok", list: data.ideas.slice(0, 3) });
-    } catch (e) {
-      setIdeas({ st: "err" });
-    }
-  }
-
   /* ---- 导入材料 ---- */
   function finishImport(art) {
     if (!canOpenNewTab()) return;
@@ -1453,7 +1420,6 @@ ${curText}
     setActiveId(id);
     setView("read");
     setQuiz({ st: "idle" });
-    setIdeas({ st: "idle" });
     setShowTrans(false);
     clickedRef.current = new Set();
     setImpOpen(false);
@@ -2231,7 +2197,6 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                     className={c.id === chipCat ? "cat on" : "cat"}
                     onClick={() => { setChipCat(c.id); setChips(pickChips(c.pool)); setRealErr(""); }}
                   >
-                    {c.id === "creator" && <Clapperboard size={12} />}
                     {c.name}
                   </button>
                 ))}
@@ -2405,22 +2370,13 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                   />
                   </div>
                   {/* 读后动作 */}
-                  <div className="after-row">
-                    <button
-                      className="btn-soft"
-                      onClick={startIdeas}
-                      disabled={ideas.st === "loading"}
-                    >
-                      {ideas.st === "loading"
-                        ? <><Loader2 size={15} className="spin" /> 提炼中…</>
-                        : <><Clapperboard size={15} /> 提炼中文选题</>}
-                    </button>
-                    {chIdx < chapters.length - 1 && (
+                  {chIdx < chapters.length - 1 && (
+                    <div className="after-row">
                       <button className="btn-soft" onClick={() => gotoCh(chIdx + 1)}>
                         下一章 <ChevronRight size={15} />
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {quiz.st === "err" && (
                     <div className="err">出题失败了。<button className="lnk" onClick={startQuiz}>重试</button></div>
@@ -2430,12 +2386,6 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                       onRetryArticle={() => generateArticle(article?.topic)} />
                   )}
 
-                  {ideas.st === "err" && (
-                    <div className="err">提炼失败了。<button className="lnk" onClick={startIdeas}>重试</button></div>
-                  )}
-                  {ideas.st === "ok" && (
-                    <IdeasBlock list={ideas.list} onCopy={copyText} />
-                  )}
                 </>
               )}
               {genError && (
@@ -3081,29 +3031,6 @@ function QuizBlock({ quiz, onPick, onNext, onRetryArticle }) {
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-/* ---------- 提炼选题 ---------- */
-
-function IdeasBlock({ list, onCopy }) {
-  const all = list.map((x, i) => `${i + 1}. ${x.t} —— ${x.a}`).join("\n");
-  return (
-    <div className="ideas">
-      <div className="quiz-head">
-        <Clapperboard size={15} /> 可做的中文选题
-        <button className="lnk" style={{ marginLeft: "auto" }}
-          onClick={() => onCopy(all, "已复制全部选题")}>复制全部</button>
-      </div>
-      {list.map((x, i) => (
-        <div className="idea" key={i}>
-          <div className="idea-t">{x.t}</div>
-          <div className="idea-a">{x.a}</div>
-          <button className="idea-cp" onClick={() => onCopy(`${x.t} —— ${x.a}`, "已复制")}
-            aria-label="复制"><Copy size={13} /></button>
-        </div>
-      ))}
     </div>
   );
 }
@@ -3816,7 +3743,7 @@ button:disabled{opacity:.55;cursor:default}
 .after-row{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap}
 
 /* ---- 小测 ---- */
-/* 小测和选题嵌在文章卡片里，所以用「凹进去」的底色，不要再叠一层卡片 */
+/* 小测嵌在文章卡片里，所以用「凹进去」的底色，不要再叠一层卡片 */
 .quiz{margin-top:20px;background:var(--paper);border:1px solid var(--line);border-radius:13px;padding:20px}
 .quiz-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700}
 .quiz-q{margin-top:12px;font-size:15.5px;line-height:1.7}
@@ -3838,15 +3765,6 @@ button:disabled{opacity:.55;cursor:default}
 .quiz-adj{margin:12px 0 14px;font-size:14px;color:var(--ink2)}
 .quiz-adj.up{color:var(--ok);background:var(--ok-bg);border-radius:9px;padding:8px 12px;display:inline-block}
 .quiz-adj.down{color:var(--bad);background:var(--bad-bg);border-radius:9px;padding:8px 12px;display:inline-block}
-
-/* ---- 选题 ---- */
-.ideas{margin-top:20px;background:var(--paper);border:1px solid var(--line);border-radius:13px;padding:20px}
-.idea{position:relative;padding:11px 34px 11px 0;border-bottom:1px dashed var(--line2)}
-.idea:last-child{border-bottom:none}
-.idea-t{font-weight:700;font-size:15px}
-.idea-a{margin-top:3px;font-size:13.5px;color:var(--ink2)}
-.idea-cp{position:absolute;right:0;top:12px;color:var(--mut);padding:5px;border-radius:7px}
-.idea-cp:hover{background:var(--line2);color:var(--ink)}
 
 /* ---- 骨架 ---- */
 .skel{padding-top:8px}
