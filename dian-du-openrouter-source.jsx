@@ -382,7 +382,9 @@ async function postOnce(url, headers, body) {
   return data;
 }
 
-async function callClaude(prompt, apiKey, model, tools, providerId) {
+/* web=true 时开启联网搜索（目前只有 OpenRouter 支持）。
+   返回的对象上挂一个不可枚举的 __cites，装搜索引擎实际访问过的页面。 */
+async function callClaude(prompt, apiKey, model, web, providerId) {
   const p = providerOf(providerId);
   const useModel = model || p.defaultModel;
   let data;
@@ -419,8 +421,10 @@ async function callClaude(prompt, apiKey, model, tools, providerId) {
     data = await postOnce(p.endpoint, headers, {
       model: useModel,
       messages: [{ role: "user", content: prompt }],
-      // 联网搜索的写法各家不同，目前只有 OpenRouter 支持这种格式
-      ...(tools && p.webSearch ? { tools } : {}),
+      // OpenRouter 的联网搜索走 plugins，不是 tools。
+      // tools 是给自定义函数调用用的，塞个 {type:"..."} 进去不会报错，
+      // 会被静默忽略——模型压根没搜网，只是凭记忆编。这个坑踩过一次。
+      ...(web && p.webSearch ? { plugins: [{ id: "web", max_results: 5 }] } : {}),
     });
   }
 
@@ -429,7 +433,22 @@ async function callClaude(prompt, apiKey, model, tools, providerId) {
   const s = clean.indexOf("{");
   const e = clean.lastIndexOf("}");
   if (s === -1 || e === -1) throw new Error("API");
-  return JSON.parse(clean.slice(s, e + 1));
+  const out = JSON.parse(clean.slice(s, e + 1));
+  // 挂成不可枚举，免得混进正文字段或被 JSON.stringify 存进 localStorage
+  Object.defineProperty(out, "__cites", { value: citesOf(data), enumerable: false });
+  return out;
+}
+
+/* 取出搜索引擎真正访问过的页面。
+   这是 OpenRouter 附加的，不是模型自己写的——比让模型「标明出处」可信得多，
+   因为模型能编出一个格式完全合法、但根本不存在的网址。 */
+function citesOf(data) {
+  const ann = data.choices?.[0]?.message?.annotations;
+  if (!Array.isArray(ann)) return [];
+  return ann
+    .filter((a) => a && a.type === "url_citation" && a.url_citation)
+    .map((a) => a.url_citation)
+    .filter((c) => /^https?:\/\/\S+\.\S+/i.test(c.url || ""));
 }
 
 /* 两种协议的正文位置不一样，统一取出纯文本 */
@@ -1498,8 +1517,10 @@ ${curText}
 
 如果实在无法获取该页面的英文内容，返回：{"error":"一句话中文原因"}`;
     try {
-      const data = await callClaude(prompt, apiKey, model, [{ type: "openrouter:web_search" }], providerId);
+      const data = await callClaude(prompt, apiKey, model, true, providerId);
       if (data.error || !data.content) throw new Error(data.error || "empty");
+      // 没有任何搜索引用 = 根本没去读这个页面，正文多半是编的
+      if (!(data.__cites || []).length) throw new Error("nocite");
       const latin = (data.content.match(/[A-Za-z]/g) || []).length;
       if (latin < 40) throw new Error("thin");
       const chs = splitChapters(data.content);
@@ -1511,7 +1532,11 @@ ${curText}
         topic: hostOf(url), level, imported: true,
       });
     } catch (e) {
-      setImpErr("没抓到这个页面的英文内容——最稳的办法：把正文（或视频字幕）复制过来，用「粘贴文本」导入");
+      setImpErr(
+        e.message === "nocite"
+          ? "没有真正抓到这个页面（模型没返回任何访问记录），内容不可信，已放弃。把正文复制过来用「粘贴文本」导入最稳"
+          : "没抓到这个页面的英文内容——最稳的办法：把正文（或视频字幕）复制过来，用「粘贴文本」导入"
+      );
     } finally {
       setImpBusy(false);
     }
@@ -1547,25 +1572,38 @@ ${curText}
 
 如果搜不到可靠的，返回：{"error":"一句话中文原因"}`;
     try {
-      const data = await callClaude(prompt, apiKey, model, [{ type: "openrouter:web_search" }], providerId);
+      const data = await callClaude(prompt, apiKey, model, true, providerId);
       if (data.error || !data.content) throw new Error("empty");
-      // 宁可不给，也不给一个编出来的链接
-      if (!/^https?:\/\/\S+\.\S+/i.test(String(data.url || ""))) throw new Error("nourl");
+
+      /* 出处以搜索引擎实际访问过的页面为准。
+         模型自报的 url 只在能和引用列表对上时才用——它完全有能力
+         编出一个格式合法却不存在的网址，光校验格式挡不住。 */
+      const cites = data.__cites || [];
+      if (!cites.length) throw new Error("nocite");
+      const said = String(data.url || "");
+      const hit = cites.find((c) => c.url === said)
+        || cites.find((c) => hostOf(c.url) === hostOf(said))
+        || cites[0];
+
       if ((data.content.match(/[A-Za-z]/g) || []).length < 200) throw new Error("thin");
       const chs = splitChapters(data.content);
+      const site = data.site || hostOf(hit.url);
       finishImport({
-        title: data.title || "Untitled",
+        title: data.title || hit.title || "Untitled",
         chapters: chs, ch: 0, trans: {},
-        srcUrl: data.url,
-        srcSite: data.site || hostOf(data.url),
+        srcUrl: hit.url,
+        srcSite: site,
         srcDate: data.date || "",
-        cn_intro: `来自 ${data.site || hostOf(data.url)} 的真实文章${data.date ? `（${data.date}）` : ""}，正文为原文摘录。点上方来源链接可核对原文`,
+        // 模型报的网址和真正搜到的对不上时，如实说出来，别假装一致
+        cn_intro: `来自 ${site} 的真实文章${data.date ? `（${data.date}）` : ""}，正文为原文摘录。`
+          + (said && said !== hit.url ? "注意：模型自报的网址与实际搜到的页面不一致，已改用实际页面——" : "")
+          + "点上方来源链接可核对原文",
         topic: (typeof theTopic === "string" && theTopic.trim()) || cat.name, level, imported: true,
       });
     } catch (e) {
       setRealErr(
-        e.message === "nourl"
-          ? "模型没给出可核对的原文链接，这一篇不予采用——宁可不给，也不给编造的出处。再点一次试试"
+        e.message === "nocite"
+          ? "这次没有真正联网搜索（没拿到任何搜索结果），拿不到可核对的出处，不予采用。再点一次试试；一直这样的话检查服务商是否支持联网"
           : "没搜到合适的真实文章。换个说法或换个分类再试；实在找不到就用「AI 现写」，但那是编的"
       );
     } finally {
