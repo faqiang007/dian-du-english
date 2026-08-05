@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>007学英语 · 切换模型</title>
+<title>007学英语 · 切换服务商 / 模型</title>
 <style>
-body{font-family:-apple-system,'PingFang SC',sans-serif;max-width:640px;margin:50px auto;padding:0 20px;line-height:1.7;color:#1C2B45;background:#FCFBF7}
+body{font-family:-apple-system,'PingFang SC',sans-serif;max-width:680px;margin:50px auto;padding:0 20px;line-height:1.7;color:#1C2B45;background:#FCFBF7}
 h1{font-size:19px}
 .cur{background:#F7F5EE;padding:14px;border-radius:8px;font-size:14px;margin:18px 0}
 code{background:#EDF2FA;padding:2px 6px;border-radius:4px;font-size:13px}
@@ -12,42 +12,86 @@ code{background:#EDF2FA;padding:2px 6px;border-radius:4px;font-size:13px}
 .row button{margin-left:auto;background:#2F5AA8;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap}
 .row.on{border-color:#2E7D5B;background:#E8F4EE}
 .row.on button{background:#8B94A6;cursor:default}
-.ok{color:#2E7D5B;font-weight:700}
+.row.no button{background:#C9CFDA;cursor:not-allowed}
+.ok{color:#2E7D5B;font-weight:700} .mut{color:#8B94A6}
 .tip{font-size:13px;color:#8B94A6;margin-top:22px;border-top:1px solid #E7E5DC;padding-top:14px}
+.mbox{margin:18px 0;padding:14px;border:1px solid #E7E5DC;border-radius:8px;background:#fff}
+input{padding:8px;border:1px solid #E7E5DC;border-radius:6px;font-size:14px;width:280px;font-family:ui-monospace,Menlo,monospace}
+.mbox button{background:#2F5AA8;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;margin-left:8px}
 </style></head><body>
-<h1>切换 007学英语 使用的模型</h1>
+<h1>切换 007学英语 使用的服务商 / 模型</h1>
 <div class="cur" id="cur">读取中…</div>
+
 <div id="list"></div>
-<p class="tip">改完请回到应用页面按 <b>Cmd + Shift + R</b> 刷新，新模型才会生效。<br>
-生词本、学习记录不受影响。<br><br>
-应用里也能改：点顶部的调色板图标 → 拉到最底部 → 「更换 Key / 模型」。</p>
+
+<div class="mbox">
+  <b style="font-size:14px">手动指定当前服务商的模型</b>
+  <div class="d mut" style="font-size:12.5px;margin:4px 0 10px">
+    通常不用在这里改——应用设置页里点「获取可用模型」可以直接从服务商拉列表来选，更准确。
+  </div>
+  <input id="m" placeholder="模型名"> <button onclick="saveModel()">保存模型</button>
+  <span id="msaved"></span>
+</div>
+
+<p class="tip">改完请回到应用页面按 <b>Cmd + Shift + R</b> 刷新，新设置才会生效。<br>
+生词本、学习记录不受影响。<br>
+灰色按钮表示那家还没填过 API Key——请在应用设置页里选中它并填好密钥。<br><br>
+应用里也能改：点顶部的调色板图标 → 拉到最底部 → 「更换服务商 / 模型」。</p>
 
 <script>
-var K="dd-or-model";
-var MODELS=[
- ["deepseek/deepseek-v4-pro","质量更好，激活 49B，生成文章更地道（约 0.0035 元/篇）"],
- ["deepseek/deepseek-v4-flash","速度更快，激活 13B，日常查词翻译够用（约 0.0011 元/篇）"],
- ["deepseek/deepseek-v4-flash-0731","最便宜的快照版本（约 0.0007 元/篇）"],
- ["anthropic/claude-sonnet-4.6","换到原生 IP 节点后可用，否则会 403"]
-];
-function cur(){ try{ return localStorage.getItem(K)||""; }catch(e){ return ""; } }
+var P={
+  openrouter:{name:"OpenRouter",d:"一把钥匙调几十家模型，支持网页导入。国内需代理",def:"deepseek/deepseek-v4-pro"},
+  deepseek:{name:"DeepSeek 深度求索",d:"国内直连免代理，便宜，日常推荐",def:"deepseek-chat"},
+  moonshot:{name:"月之暗面 Kimi",d:"国内直连免代理，中文语感好",def:"kimi-latest"},
+  zhipu:{name:"智谱 GLM",d:"国内直连免代理",def:"glm-4-plus"},
+  qwen:{name:"阿里通义千问",d:"国内直连免代理，阿里云百炼平台",def:"qwen-plus"},
+  siliconflow:{name:"硅基流动 SiliconFlow",d:"国内直连免代理，聚合开源模型，注册送额度",def:"deepseek-ai/DeepSeek-V3"},
+  anthropic:{name:"Anthropic Claude",d:"官方接口。需代理，且必须是家宽 IP",def:"claude-sonnet-5"},
+  openai:{name:"OpenAI",d:"官方接口。需代理，且必须是家宽 IP",def:"gpt-4o"},
+  gemini:{name:"Google Gemini",d:"有免费额度。需代理",def:"gemini-2.5-flash"}
+};
+function get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function getJSON(k){ try{ return JSON.parse(localStorage.getItem(k))||{}; }catch(e){ return {}; } }
+function setJSON(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch(e){ alert("写入失败："+e.message); return false; } }
+
+var cur = get("dd-provider")||"openrouter";
+if(!P[cur]) cur="openrouter";
+var keys = getJSON("dd-keys-v1");
+var models = getJSON("dd-models-v1");
+// 兼容还没迁移过的老数据
+if(!keys.openrouter){ var ok=get("dd-or-key"); if(ok) keys.openrouter=ok; }
+if(!models.openrouter){ var om=get("dd-or-model"); if(om){ try{om=JSON.parse(om);}catch(e){} if(typeof om==="string") models.openrouter=om; } }
+
 function draw(){
-  var c=cur();
-  document.getElementById("cur").innerHTML = c
-    ? "当前模型：<code>"+c+"</code>"
-    : "当前未设置模型，应用会用内置默认值 <code>deepseek/deepseek-v4-pro</code>";
+  var m = models[cur]||P[cur].def;
+  document.getElementById("cur").innerHTML =
+    "当前使用：<b>"+P[cur].name+"</b>　模型 <code>"+m+"</code>"+
+    (keys[cur]?"":" <span style='color:#B5432F'>（这家还没填 API Key）</span>");
+  document.getElementById("m").value = models[cur]||"";
+  document.getElementById("m").placeholder = P[cur].def;
   var h="";
-  MODELS.forEach(function(m){
-    var on = (c===m[0]);
-    h += '<div class="row'+(on?' on':'')+'"><div><b>'+m[0]+'</b><div class="d">'+m[1]+'</div></div>'+
-         '<button onclick="pick(\''+m[0]+'\')"'+(on?' disabled':'')+'>'+(on?'使用中':'切换')+'</button></div>';
-  });
+  for(var id in P){
+    var on=(id===cur), has=!!keys[id];
+    h += '<div class="row'+(on?" on":"")+(has?"":" no")+'">'+
+         '<div><b>'+P[id].name+'</b><div class="d">'+P[id].d+
+         (models[id]?'　·　当前模型 '+models[id]:'')+'</div></div>'+
+         '<button onclick="pick(\''+id+'\')"'+((on||!has)?" disabled":"")+'>'+
+         (on?"使用中":(has?"切换":"未配置"))+'</button></div>';
+  }
   document.getElementById("list").innerHTML=h;
 }
-function pick(m){
-  try{ localStorage.setItem(K,m); }catch(e){ alert("写入失败："+e.message); return; }
-  draw();
+function pick(id){
+  if(!keys[id]) return;
+  try{ localStorage.setItem("dd-provider",id); }catch(e){ alert("写入失败："+e.message); return; }
+  cur=id; draw();
   document.getElementById("cur").innerHTML += ' <span class="ok">✓ 已切换</span>';
+}
+function saveModel(){
+  var v=document.getElementById("m").value.trim();
+  if(v) models[cur]=v; else delete models[cur];
+  if(!setJSON("dd-models-v1",models)) return;
+  draw();
+  document.getElementById("msaved").innerHTML=' <span class="ok">✓ 已保存</span>';
 }
 draw();
 </script></body></html>

@@ -1,12 +1,21 @@
 /* ============================================================
-   007学英语 · 本地版源代码（OpenRouter 引擎）
+   007学英语 · 本地版源代码（多服务商引擎）
    —— 请和 dian-du-openrouter.html 一起保存好！
 
    基于云端 v9 全功能版改造：storage 换成 localStorage，
-   callClaude 换成 OpenRouter 协议（Bearer 认证 + model 可选），
-   新增 API Key / 模型 设置页（首次打开会看到）。
+   callClaude 支持多家模型服务商（见下方 PROVIDERS 表），
+   新增服务商 / API Key / 模型 设置页（首次打开会看到）。
    界面、交互逻辑与云端版完全一致，未来云端版再更新，
    把新的 app.jsx 内容整体替换本文件的对应部分即可同步。
+
+   加新服务商：只要它的接口兼容 OpenAI 的 /chat/completions 格式，
+   在 PROVIDERS 里加一条就行，不用改其他任何代码。
+   前提是该服务商的 CORS 要放行 file:// 的 null 来源——
+   现有 9 家都实测通过，新增时可以这样验证：
+     curl -X OPTIONS <接口地址> -H "Origin: null" \
+       -H "Access-Control-Request-Method: POST" \
+       -H "Access-Control-Request-Headers: authorization,content-type" -D -
+   返回头里有 access-control-allow-origin 就说明可以直连。
 
    重新打包步骤：
    1. npm i react@18.3.1 react-dom@18.3.1 lucide-react@0.383.0 mammoth esbuild
@@ -21,7 +30,8 @@
       <div id="root"></div> + 背景色 #FCFBF7
 
    数据存在浏览器 localStorage（键名 dd-vocab-v1 / dd-tabs-v1 /
-   dd-stats-v1 / dd-prefs-v1 / dd-or-key / dd-or-model），
+   dd-stats-v1 / dd-prefs-v1 / dd-provider / dd-keys-v1 / dd-models-v1，
+   另有旧版的 dd-or-key / dd-or-model 用于自动迁移），
    改版时不要改这些键名，否则用户数据会"消失"。
    ============================================================ */
 
@@ -32,7 +42,7 @@ import {
   Brain, BarChart3, Puzzle, Clapperboard, ClipboardCheck,
   ChevronLeft, ChevronRight, RotateCcw, Turtle, Flame,
   Languages, Palette, Upload, Download, FileUp, ChevronDown, MoreHorizontal,
-  KeyRound, Settings
+  KeyRound, Settings, Bookmark, Menu, Globe, ExternalLink
 } from "lucide-react";
 import mammoth from "mammoth";
 
@@ -55,93 +65,366 @@ const LEVELS = [
     spec: "外刊原版水平（The Economist / The Atlantic 风格），词汇高级地道，论证有深度" },
 ];
 
-const TOPIC_POOL = [
-  "猫为什么会发出咕噜声", "咖啡的环球之旅", "深海里的发光生物",
-  "人类为什么会做梦", "一封来自火星的信", "地铁里的陌生人",
-  "一家百年面馆的故事", "宇航员的一天", "为什么天空是蓝色的",
-  "如果动物会开会", "一座即将消失的小岛", "面包的简史",
+/* 话题按分类组织。每类给足条目，「换一批」才不会翻来覆去就那几篇。
+   这些只是**起手提示**，真正写什么由模型决定，输入框里也能随便改。
+   加分类：往下面加一条就行，界面会自动多出一个按钮。 */
+const TOPIC_CATS = [
+  { id: "tech", name: "科技", pool: [
+    "手机芯片是怎么造出来的", "海底光缆如何连接世界", "电池为什么会老化",
+    "无人机送货离我们还有多远", "为什么充电口最后统一成了 Type-C",
+    "卫星互联网怎么覆盖偏远地区", "自动驾驶卡在哪一步", "指纹解锁的原理",
+    "机械键盘为什么让人上瘾", "二维码是怎么被发明的", "折叠屏难在哪里",
+    "为什么家用机器人还没普及", "数据中心为什么建在冷的地方",
+    "无线充电到底损失了多少电", "老式相机为什么又火了", "语音助手听懂话的过程",
+    "为什么有些网站打开特别慢", "键盘上的字母为什么这样排列" ] },
+  { id: "ai", name: "AI", pool: [
+    "大语言模型是怎么学会说话的", "AI 为什么会一本正经地胡说",
+    "AI 画画和人画画的区别", "机器翻译走过的三个阶段",
+    "推荐算法如何猜中你的心思", "AI 在医院里能做什么",
+    "自动驾驶如何判断前方是行人", "AI 生成的声音怎么以假乱真",
+    "训练一个模型要用掉多少电", "AI 会取代哪些工作，又造出哪些",
+    "人脸识别的边界在哪里", "AI 下棋比人强在什么地方",
+    "为什么 AI 数不清一句话里有几个字母", "AI 帮科学家找新药的方式",
+    "开源模型和闭源模型的区别", "AI 需要多少数据才够用",
+    "机器人学会走路有多难", "AI 写代码到什么水平了" ] },
+  { id: "sport", name: "运动", pool: [
+    "马拉松最后几公里发生了什么", "为什么游泳能练全身",
+    "跑步伤膝盖是真的吗", "肌肉是怎么长出来的",
+    "运动员的心率为什么比常人低", "拉伸到底该在运动前还是后",
+    "足球越位规则的来历", "篮球三分线为什么定在那个距离",
+    "攀岩者如何克服恐高", "举重选手为什么要大喊",
+    "为什么高原训练能提高成绩", "羽毛球球速能有多快",
+    "长跑运动员的呼吸节奏", "冷水浴对恢复有用吗",
+    "一场网球比赛要跑多远", "滑雪如何在雪面上转弯",
+    "运动后为什么会肌肉酸痛", "为什么有人越练越累" ] },
+  { id: "science", name: "科学", pool: [
+    "为什么天空是蓝色的", "人类为什么会做梦", "深海里的发光生物",
+    "闪电形成的一瞬间", "为什么水结冰会膨胀", "极光是怎么来的",
+    "蜡烛火焰为什么是上尖下圆", "地震波如何穿过地球",
+    "蜂巢为什么是六边形", "彩虹的两端到底在哪", "声音在水里传得更快吗",
+    "为什么金属摸起来更凉", "沙漠里的水从哪来", "树能长到多高",
+    "为什么盐能融化冰雪", "指南针指向的到底是哪里",
+    "细菌和病毒有什么不同", "时间为什么不能倒流" ] },
+  { id: "space", name: "太空", pool: [
+    "宇航员的一天", "一封来自火星的信", "月球背面有什么",
+    "火箭是怎么飞出大气层的", "太空里为什么听不到声音",
+    "宇航服里藏着什么装置", "国际空间站如何供水",
+    "为什么去火星要等窗口期", "望远镜如何看到几十亿年前的光",
+    "太空垃圾有多危险", "失重下人体会发生什么变化",
+    "黑洞照片是怎么拍的", "为什么木星有那么多卫星",
+    "探测器如何靠引力弹弓加速", "在太空种菜可行吗",
+    "土星环是由什么组成的", "宇宙到底有没有边", "第一颗人造卫星的故事" ] },
+  { id: "biz", name: "商业", pool: [
+    "咖啡的环球之旅", "一家百年面馆的故事", "集装箱如何改变了贸易",
+    "为什么机票价格一直在变", "超市货架的摆放心机",
+    "免费的产品靠什么赚钱", "一杯奶茶的成本构成",
+    "品牌 logo 为什么越改越简单", "会员制商店的生意经",
+    "为什么便利店总开在路口", "快时尚背后的供应链",
+    "二手市场为什么越来越大", "订阅制是怎么流行起来的",
+    "小众品牌如何找到自己的人", "为什么有些店故意排长队",
+    "包装设计对销量的影响", "一件商品从工厂到你手上的路",
+    "打折为什么总在特定日子" ] },
+  { id: "health", name: "健康", pool: [
+    "睡眠分成哪几个阶段", "为什么熬夜后特别想吃甜的",
+    "咖啡因在身体里待多久", "久坐对身体做了什么",
+    "喝水到底要不要八杯", "肠道菌群和情绪的关系",
+    "为什么冬天更容易感冒", "护眼的正确做法",
+    "情绪压力如何影响免疫力", "为什么有人天生浅眠",
+    "早餐真的最重要吗", "走一万步这个数字从哪来",
+    "为什么疼痛因人而异", "维生素补充剂有用吗",
+    "打哈欠会传染的原因", "冥想对大脑的实际影响",
+    "为什么有些人怎么吃都不胖", "戒糖之后身体的变化" ] },
+  { id: "nature", name: "自然", pool: [
+    "猫为什么会发出咕噜声", "一座即将消失的小岛", "候鸟如何找到方向",
+    "蚂蚁社会的分工", "树木之间会交流吗", "珊瑚白化意味着什么",
+    "沙漠动物如何度过白天", "章鱼有多聪明",
+    "为什么有些花只在夜里开", "蜜蜂消失会怎样",
+    "企鹅怎么在南极过冬", "森林大火之后发生什么",
+    "鲸鱼的歌声传多远", "变色龙变色的真正原因",
+    "种子能休眠多久", "城市里的野生动物",
+    "为什么有的树会落叶有的不会", "土壤里有多少生命" ] },
+  { id: "culture", name: "文化", pool: [
+    "面包的简史", "地铁里的陌生人", "如果动物会开会",
+    "文字是怎么被发明的", "为什么各国插座不一样",
+    "一部电影的配乐如何影响情绪", "地名背后的历史",
+    "为什么钟表是顺时针", "博物馆如何决定展出什么",
+    "翻译一本小说会丢掉什么", "节日食物的由来",
+    "为什么图书馆要保持安静", "路牌字体的讲究",
+    "一门语言消失的过程", "为什么有些歌全世界都会哼",
+    "手写信正在消失吗", "城市广场的功能变迁", "颜色在不同文化里的含义" ] },
+  { id: "creator", name: "创作素材", pool: [
+    "为什么人们相信自己愿意相信的", "损失厌恶：怕失去大于想得到",
+    "从众心理：人多的地方更安全吗", "稀缺感如何让人冲动下单",
+    "讲故事为什么比讲道理有效", "第一印象的心理学",
+    "为什么坏消息传播更快", "峰终定律：人如何记住一段体验",
+    "多巴胺与刷不停的手指", "承诺一致性：小请求变成大让步",
+    "光环效应：好看的人更可信吗", "为什么短视频让人上瘾",
+    "锚定效应：第一个数字定基调", "沉没成本让人放不下手",
+    "框架效应：换个说法结论就变了", "为什么人高估自己的判断",
+    "社会认同：评论区如何左右选择", "好奇心缺口：话说一半的力量" ] },
 ];
 
-const CREATOR_POOL = [
-  "为什么人们相信自己愿意相信的", "损失厌恶：怕失去大于想得到",
-  "从众心理：人多的地方更安全吗", "稀缺感如何让人冲动下单",
-  "讲故事为什么比讲道理有效", "第一印象的心理学",
-  "为什么坏消息传播更快", "峰终定律：人如何记住一段体验",
-  "多巴胺与刷不停的手指", "承诺一致性：小请求变成大让步",
-  "光环效应：好看的人更可信吗", "为什么短视频让人上瘾",
-];
+function catOf(id) {
+  return TOPIC_CATS.find((c) => c.id === id) || TOPIC_CATS[0];
+}
 
 const VOCAB_KEY = "dd-vocab-v1";
 const ARTICLE_KEY = "dd-article-v1";
 const STATS_KEY = "dd-stats-v1";
 const TABS_KEY = "dd-tabs-v1";
 const MAX_TABS = 6;
-const APIKEY_STORE = "dd-or-key";
-const MODEL_STORE = "dd-or-model";
-const DEFAULT_MODEL = "deepseek/deepseek-v4-pro";
+/* 每章的目标词数。定成 350 是因为查词、译文、小测都要把整章发给模型，
+   再长就容易漏段和跑题。想读长文档不靠调大它，靠分章。 */
+const CHAPTER_WORDS = 350;
+/* 单篇文档的字符上限。浏览器 localStorage 实测约 480 万字符封顶，
+   且要和生词本、统计、其他文章共用，所以给单篇留 150 万——
+   约 25 万英文词，两本长篇小说的量。 */
+const MAX_DOC_CHARS = 1500000;
+const APIKEY_STORE = "dd-or-key";      // 旧版单一 Key（仅用于迁移）
+const MODEL_STORE = "dd-or-model";     // 旧版单一模型（仅用于迁移）
+const PROVIDER_STORE = "dd-provider";  // 当前选中的服务商 id
+const KEYS_STORE = "dd-keys-v1";       // { 服务商id: apiKey }
+const MODELS_STORE = "dd-models-v1";   // { 服务商id: 模型名 }
 const PREFS_KEY = "dd-prefs-v1";
 
+/* ---------- 模型服务商 ----------
+   全部实测支持浏览器直连（CORS 放行 file:// 的 null 来源）。
+   protocol: "openai" = 标准 /chat/completions；"anthropic" = Messages API。
+   modelsUrl 存在时，设置页可一键拉取该服务商的真实模型列表，
+   所以 defaultModel 只是初始建议，过时了点一下按钮就能更新。 */
+const PROVIDERS = {
+  openrouter: {
+    name: "OpenRouter", protocol: "openai", webSearch: true,
+    endpoint: "https://openrouter.ai/api/v1/chat/completions",
+    modelsUrl: "https://openrouter.ai/api/v1/models",
+    defaultModel: "deepseek/deepseek-v4-pro",
+    keyHint: "sk-or-...", site: "openrouter.ai",
+    blurb: "一把钥匙调用几十家模型，模型名格式是「厂商/模型」。国内需要开代理。",
+    proxy: true,
+  },
+  deepseek: {
+    name: "DeepSeek 深度求索", protocol: "openai",
+    endpoint: "https://api.deepseek.com/chat/completions",
+    modelsUrl: "https://api.deepseek.com/models",
+    defaultModel: "deepseek-chat",
+    keyHint: "sk-...", site: "platform.deepseek.com",
+    blurb: "国内直连不用代理，价格便宜，是日常使用的推荐选择。",
+  },
+  moonshot: {
+    name: "月之暗面 Kimi", protocol: "openai",
+    endpoint: "https://api.moonshot.cn/v1/chat/completions",
+    modelsUrl: "https://api.moonshot.cn/v1/models",
+    defaultModel: "kimi-latest",
+    keyHint: "sk-...", site: "platform.moonshot.cn",
+    blurb: "国内直连不用代理，中文语感好。",
+  },
+  zhipu: {
+    name: "智谱 GLM", protocol: "openai",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    modelsUrl: "",
+    defaultModel: "glm-4-plus",
+    keyHint: "一串带「.」的密钥", site: "bigmodel.cn",
+    blurb: "国内直连不用代理。该平台不提供模型列表接口，模型名请照官网文档填写。",
+  },
+  qwen: {
+    name: "阿里通义千问", protocol: "openai",
+    endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    modelsUrl: "",
+    defaultModel: "qwen-plus",
+    keyHint: "sk-...", site: "bailian.console.aliyun.com",
+    blurb: "国内直连不用代理。在阿里云百炼平台开通后获取密钥。",
+  },
+  siliconflow: {
+    name: "硅基流动 SiliconFlow", protocol: "openai",
+    endpoint: "https://api.siliconflow.cn/v1/chat/completions",
+    modelsUrl: "https://api.siliconflow.cn/v1/models",
+    defaultModel: "deepseek-ai/DeepSeek-V3",
+    keyHint: "sk-...", site: "siliconflow.cn",
+    blurb: "国内直连不用代理，聚合了很多开源模型，注册送额度。",
+  },
+  anthropic: {
+    name: "Anthropic Claude", protocol: "anthropic",
+    endpoint: "https://api.anthropic.com/v1/messages",
+    modelsUrl: "https://api.anthropic.com/v1/models",
+    defaultModel: "claude-sonnet-5",
+    keyHint: "sk-ant-...", site: "console.anthropic.com",
+    blurb: "Claude 官方接口。国内需要开代理，且代理必须是家宽/住宅 IP，机房 IP 会被拒。",
+    proxy: true,
+  },
+  openai: {
+    name: "OpenAI", protocol: "openai",
+    endpoint: "https://api.openai.com/v1/chat/completions",
+    modelsUrl: "https://api.openai.com/v1/models",
+    defaultModel: "gpt-4o",
+    keyHint: "sk-...", site: "platform.openai.com",
+    blurb: "OpenAI 官方接口。国内需要开代理，且代理必须是家宽/住宅 IP，机房 IP 会被拒。",
+    proxy: true,
+  },
+  gemini: {
+    name: "Google Gemini", protocol: "openai",
+    endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    modelsUrl: "https://generativelanguage.googleapis.com/v1beta/openai/models",
+    defaultModel: "gemini-2.5-flash",
+    keyHint: "AIza...", site: "aistudio.google.com",
+    blurb: "Google AI Studio 提供免费额度。国内需要开代理。",
+    proxy: true,
+  },
+};
+const PROVIDER_IDS = Object.keys(PROVIDERS);
+const DEFAULT_PROVIDER = "openrouter";
+
+function providerOf(id) { return PROVIDERS[id] || PROVIDERS[DEFAULT_PROVIDER]; }
+
+/* 读取「每个服务商各存一份」的 Key / 模型，并把旧版单 Key 数据迁移进来 */
+function loadKeyMap() {
+  const m = sGet(KEYS_STORE) || {};
+  if (!m[DEFAULT_PROVIDER]) {
+    try {
+      const old = localStorage.getItem(APIKEY_STORE);
+      if (old) { m[DEFAULT_PROVIDER] = old; sSet(KEYS_STORE, m); }
+    } catch (e) {}
+  }
+  return m;
+}
+function loadModelMap() {
+  const m = sGet(MODELS_STORE) || {};
+  if (!m[DEFAULT_PROVIDER]) {
+    try {
+      const old = localStorage.getItem(MODEL_STORE);
+      if (old) { m[DEFAULT_PROVIDER] = old; sSet(MODELS_STORE, m); }
+    } catch (e) {}
+  }
+  return m;
+}
+function loadProviderId() {
+  try {
+    const p = localStorage.getItem(PROVIDER_STORE);
+    if (p && PROVIDERS[p]) return p;
+  } catch (e) {}
+  return DEFAULT_PROVIDER;
+}
+
 /* ---------- 外观主题 ---------- */
+/* 配色统一走 CSS 变量，主题只覆盖其中几个。
+   --paper 是页面底色、--card 是卡片底色，两者必须拉开差距，
+   否则卡片会「糊」在背景里——这正是旧版看着扁平的原因。 */
 const BASE_VARS = {
-  "--paper": "#FCFBF7", "--card": "#FFFFFF", "--ink": "#1C2B45", "--ink2": "#44546E",
-  "--mut": "#8B94A6", "--line": "#E7E5DC", "--line2": "#EFEDE5",
-  "--blue": "#2F5AA8", "--blue-d": "#24477F", "--blue-bg": "#EDF2FA",
-  "--hi": "#FFE873", "--hi-hot": "#FFDF54", "--hi-soft": "#FFF4BE", "--hi-wash": "#FFFAE0",
-  "--hi-text": "#7A6200", "--ok": "#2E7D5B", "--ok-bg": "#E8F4EE",
-  "--bad": "#B5432F", "--bad-bg": "#FBEFEC",
-  "--top": "rgba(252,251,247,.94)", "--sk": "#F7F5EE",
+  "--paper": "#F5F6F8", "--card": "#FFFFFF", "--ink": "#111826", "--ink2": "#4B5565",
+  "--mut": "#98A2B3", "--line": "#E3E6EC", "--line2": "#F0F2F5",
+  "--blue": "#4055C6", "--blue-d": "#33449E", "--blue-bg": "#EEF1FD",
+  "--hi": "#F5B944", "--hi-hot": "#F0A81E", "--hi-soft": "#FEF3D6", "--hi-wash": "#FEF8E8",
+  "--hi-text": "#7A5200", "--ok": "#12855F", "--ok-bg": "#E7F5EF",
+  "--bad": "#C4342B", "--bad-bg": "#FDECEA",
+  "--top": "rgba(245,246,248,.88)", "--sk": "#EDEFF3",
+  "--sh": "0 1px 2px rgba(17,24,38,.04)", "--sh-l": "0 4px 16px rgba(64,85,198,.10)",
 };
 const THEMES = {
-  paper: { name: "纸白", swatch: "#FCFBF7", vars: BASE_VARS },
-  cream: { name: "米黄", swatch: "#F6EFDD", vars: { ...BASE_VARS,
-    "--paper": "#F6EFDD", "--card": "#FDF9EE", "--line": "#E5D9BE", "--line2": "#EDE3CC",
-    "--top": "rgba(246,239,221,.94)", "--sk": "#F0E7D2" } },
-  green: { name: "豆绿", swatch: "#E7EFE2", vars: { ...BASE_VARS,
-    "--paper": "#E7EFE2", "--card": "#F6FAF2", "--line": "#D2DEC9", "--line2": "#DDE7D5",
-    "--top": "rgba(231,239,226,.94)", "--sk": "#DFE9D6" } },
-  dark: { name: "夜间", swatch: "#141926", vars: { ...BASE_VARS,
-    "--paper": "#141926", "--card": "#1D2433", "--ink": "#E8ECF5", "--ink2": "#B9C3D6",
-    "--mut": "#7E89A0", "--line": "#2C3549", "--line2": "#242C3E",
-    "--blue": "#5C8CE6", "--blue-d": "#7AA2EE", "--blue-bg": "#25324C",
-    "--hi": "#E9CB45", "--hi-hot": "#F3D855",
-    "--hi-soft": "rgba(233,203,69,.30)", "--hi-wash": "rgba(233,203,69,.13)",
-    "--hi-text": "#E9CB45", "--ok": "#63C495", "--ok-bg": "#1D3A2E",
-    "--bad": "#E28A74", "--bad-bg": "#3B2622",
-    "--top": "rgba(20,25,38,.92)", "--sk": "#232B3D" } },
+  paper: { name: "纸白", swatch: "#F5F6F8", vars: BASE_VARS },
+  cream: { name: "米黄", swatch: "#F4ECDC", vars: { ...BASE_VARS,
+    "--paper": "#F4ECDC", "--card": "#FFFBF2", "--line": "#E6DAC2", "--line2": "#F0E8D6",
+    "--top": "rgba(244,236,220,.9)", "--sk": "#EBE1CB",
+    "--sh": "0 1px 2px rgba(90,70,35,.05)" } },
+  green: { name: "豆绿", swatch: "#E4EEDF", vars: { ...BASE_VARS,
+    "--paper": "#E4EEDF", "--card": "#F8FCF6", "--line": "#D0DEC8", "--line2": "#E3ECDE",
+    "--top": "rgba(228,238,223,.9)", "--sk": "#D9E6D3",
+    "--sh": "0 1px 2px rgba(40,70,40,.05)" } },
+  dark: { name: "夜间", swatch: "#12151C", vars: { ...BASE_VARS,
+    "--paper": "#12151C", "--card": "#1A1E27", "--ink": "#E9ECF2", "--ink2": "#AEB6C4",
+    "--mut": "#727B8C", "--line": "#2A2F3B", "--line2": "#222732",
+    "--blue": "#8095F5", "--blue-d": "#9AABF8", "--blue-bg": "#242A44",
+    "--hi": "#F0B33C", "--hi-hot": "#FFC65A",
+    "--hi-soft": "rgba(240,179,60,.28)", "--hi-wash": "rgba(240,179,60,.12)",
+    "--hi-text": "#F0B33C", "--ok": "#4EC08C", "--ok-bg": "#15332A",
+    "--bad": "#E5867A", "--bad-bg": "#33211F",
+    "--top": "rgba(18,21,28,.9)", "--sk": "#212632",
+    "--sh": "0 1px 2px rgba(0,0,0,.3)", "--sh-l": "0 4px 16px rgba(128,149,245,.14)" } },
 };
 const FONT_SIZES = [15, 17, 19, 21, 23];
 
 /* ---------- helpers ---------- */
 
-async function callClaude(prompt, apiKey, model, tools) {
+/* 把 HTTP 状态码归类成应用内部的错误代号。
+   注意不能只看状态码：Google Gemini 把「密钥无效」报成 400，
+   只靠状态码会归到「未知错误」，给用户毫无帮助的提示。 */
+function codeToErr(code, msg) {
+  if (/api[\s_-]?key|unauthoriz|authenticat|invalid.*credential/i.test(msg || "")) return "KEY";
+  if (/quota|insufficient|balance|billing|欠费|余额/i.test(msg || "")) return "CREDIT";
+  if (code === 401 || code === 403) return "KEY";
+  if (code === 402) return "CREDIT";
+  if (code === 429) return "RATE";
+  return "API";
+}
+
+/* 有的服务商（如 Gemini）出错时把内容包在数组里，先拆开再看 */
+function unwrap(data) {
+  return Array.isArray(data) ? (data[0] || {}) : (data || {});
+}
+
+/* 发一次请求。抛出的 Error 里带 detail 字段，方便判断要不要重试 */
+async function postOnce(url, headers, body) {
   let res;
   try {
-    res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + apiKey,
-        // 注意：HTTP 头的值只能是 ASCII，写中文会让 fetch 直接抛 TypeError
-        "X-Title": "007 English Reader",
-      },
-      body: JSON.stringify({
-        model: model || DEFAULT_MODEL,
-        messages: [{ role: "user", content: prompt }],
-        ...(tools ? { tools } : {}),
-      }),
-    });
+    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   } catch (e) {
+    // fetch 抛异常有两种：真的连不上，或请求本身构造非法（如头部含非 ASCII）
     throw new Error("NET");
   }
-  const data = await res.json();
-  if (data.error) {
-    const code = data.error.code;
-    if (code === 401) throw new Error("KEY");
-    if (code === 402) throw new Error("CREDIT");
-    if (code === 429) throw new Error("RATE");
-    throw new Error("API");
+  let data;
+  try { data = unwrap(await res.json()); } catch (e) { throw new Error("API"); }
+  // OpenRouter 等会在 HTTP 200 的响应体里放 error；多数服务商用 HTTP 状态码
+  const errObj = data.error;
+  if (errObj || !res.ok) {
+    const msg = (errObj && (errObj.message || errObj.type)) || "";
+    const err = new Error(codeToErr((errObj && errObj.code) || res.status, msg));
+    err.detail = msg;
+    throw err;
   }
-  const text = data.choices?.[0]?.message?.content || "";
+  return data;
+}
+
+async function callClaude(prompt, apiKey, model, tools, providerId) {
+  const p = providerOf(providerId);
+  const useModel = model || p.defaultModel;
+  let data;
+
+  if (p.protocol === "anthropic") {
+    const headers = {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      // 没有这个头，浏览器直连会被 Anthropic 拒绝
+      "anthropic-dangerous-direct-browser-access": "true",
+    };
+    const base = {
+      model: useModel,
+      max_tokens: 8192,
+      messages: [{ role: "user", content: prompt }],
+    };
+    try {
+      // 本应用只要一段 JSON，关掉思考模式更快也更省钱
+      data = await postOnce(p.endpoint, headers, { ...base, thinking: { type: "disabled" } });
+    } catch (e) {
+      // 少数模型不接受关闭思考（会返回 400），去掉这个参数再试一次
+      if (e.message === "API" && /thinking/i.test(e.detail || "")) {
+        data = await postOnce(p.endpoint, headers, base);
+      } else throw e;
+    }
+  } else {
+    const headers = {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + apiKey,
+      // 注意：HTTP 头的值只能是 ASCII，写中文会让 fetch 直接抛 TypeError
+      "X-Title": "007 English Reader",
+    };
+    data = await postOnce(p.endpoint, headers, {
+      model: useModel,
+      messages: [{ role: "user", content: prompt }],
+      // 联网搜索的写法各家不同，目前只有 OpenRouter 支持这种格式
+      ...(tools && p.webSearch ? { tools } : {}),
+    });
+  }
+
+  const text = extractText(data);
   const clean = text.replace(/```json|```/g, "").trim();
   const s = clean.indexOf("{");
   const e = clean.lastIndexOf("}");
@@ -149,12 +432,46 @@ async function callClaude(prompt, apiKey, model, tools) {
   return JSON.parse(clean.slice(s, e + 1));
 }
 
-function errText(e) {
+/* 两种协议的正文位置不一样，统一取出纯文本 */
+function extractText(data) {
+  if (Array.isArray(data.content)) {
+    return data.content.filter((b) => b && b.type === "text").map((b) => b.text).join("");
+  }
+  return data.choices?.[0]?.message?.content || "";
+}
+
+/* 拉取某个服务商当前可用的模型列表 */
+async function fetchModels(apiKey, providerId) {
+  const p = providerOf(providerId);
+  if (!p.modelsUrl) throw new Error("NOLIST");
+  const headers = p.protocol === "anthropic"
+    ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true" }
+    : { "Authorization": "Bearer " + apiKey };
+  let res;
+  try { res = await fetch(p.modelsUrl, { headers }); } catch (e) { throw new Error("NET"); }
+  let data;
+  try { data = unwrap(await res.json()); } catch (e) { throw new Error("API"); }
+  if (!res.ok || data.error) {
+    const msg = (data.error && (data.error.message || data.error.type)) || "";
+    throw new Error(codeToErr((data.error && data.error.code) || res.status, msg));
+  }
+  const list = data.data || data.models || [];
+  const ids = list.map((m) => (typeof m === "string" ? m : m.id || m.name)).filter(Boolean);
+  // Gemini 的兼容接口返回 "models/xxx"，去掉前缀好读
+  return Array.from(new Set(ids.map((id) => id.replace(/^models\//, "")))).sort();
+}
+
+function errText(e, providerId) {
+  const p = providerOf(providerId);
   switch (e.message) {
-    case "KEY": return "API Key 无效，去设置里检查一下（完整复制，以 sk-or- 开头）。";
-    case "CREDIT": return "账户余额不足，去 openrouter.ai 的 Credits 页面充值后再试。";
+    case "KEY": return `API Key 无效或没有权限，去设置里检查一下（应该是 ${p.keyHint} 这样的格式）。`;
+    case "CREDIT": return `${p.name} 账户余额不足，去 ${p.site} 充值后再试。`;
     case "RATE": return "请求太频繁，等几秒再试一次。";
-    case "NET": return "连不上 OpenRouter 服务器，检查网络（国内使用需要开代理），然后重试。";
+    case "NET": return p.proxy
+      ? `连不上 ${p.name} 服务器，检查网络（国内使用需要开代理），然后重试。`
+      : `连不上 ${p.name} 服务器，检查一下网络再重试。`;
+    case "NOLIST": return `${p.name} 没有提供模型列表接口，请照官网文档手填模型名。`;
     default: return "出了点问题，重试一下。";
   }
 }
@@ -165,8 +482,11 @@ function sGet(key) {
     return v ? JSON.parse(v) : null;
   } catch (e) { return null; }
 }
+/* 返回是否写入成功。存储写满时浏览器抛 QuotaExceededError，
+   以前这里静默吞掉，用户会以为存上了、下次打开却没了。 */
 function sSet(key, val) {
-  try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
+  try { localStorage.setItem(key, JSON.stringify(val)); return true; }
+  catch (e) { return false; }
 }
 
 function pickChips(pool) {
@@ -274,23 +594,63 @@ function parseVocabMd(text) {
 }
 
 /* 按完整句子截取到约 maxW 词 */
-function truncateWords(text, maxW = 350) {
-  const paras = String(text).replace(/\r/g, "").split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
-  const outP = [];
-  let count = 0, cut = false;
+/* 把长文按段落切成若干「章」，每章约 perCh 个英文单词。
+   段落不劈开——译文对照和跟读都按段落编号对齐，
+   一段被切成两半会让下半段的译文错位。 */
+function splitChapters(text, perCh = CHAPTER_WORDS) {
+  const paras = String(text).replace(/\r/g, "").split(/\n{2,}|\n/)
+    .map((p) => p.trim()).filter(Boolean);
+  const chs = [];
+  let buf = [], n = 0;
+  const flush = () => { if (buf.length) { chs.push(buf.join("\n\n")); buf = []; n = 0; } };
   for (const p of paras) {
-    if (cut) break;
-    const sents = splitSentences(p);
-    const keep = [];
-    for (const sen of sents) {
-      const w = (sen.match(/[A-Za-z]+/g) || []).length;
-      if (count + w > maxW && count > 0) { cut = true; break; }
-      keep.push(sen);
-      count += w;
+    const w = (p.match(/[A-Za-z]+/g) || []).length;
+    // 整章不分段的情况（常见于字幕、扫描件），只能退一步按句子切
+    if (w > perCh * 1.6) {
+      flush();
+      for (const piece of splitLongPara(p, perCh)) chs.push(piece);
+      continue;
     }
-    if (keep.length) outP.push(keep.join("").trim());
+    if (n + w > perCh && buf.length) flush();
+    buf.push(p); n += w;
   }
-  return { content: outP.join("\n\n"), truncated: cut, words: count };
+  flush();
+  return chs.length ? chs : [String(text).trim()];
+}
+
+function splitLongPara(para, perCh) {
+  const out = [];
+  let buf = [], n = 0;
+  for (const s of splitSentences(para)) {
+    const w = (s.match(/[A-Za-z]+/g) || []).length;
+    if (n + w > perCh && buf.length) { out.push(buf.join("").trim()); buf = []; n = 0; }
+    buf.push(s); n += w;
+  }
+  if (buf.length) out.push(buf.join("").trim());
+  return out;
+}
+
+function countWords(text) {
+  return (String(text).match(/[A-Za-z]+/g) || []).length;
+}
+
+/* 老版本的标签页只有 content、trans 是个数组。
+   统一成「chapters 数组 + ch 章号 + trans 按章号存」，
+   后面所有代码只认这一种形状，不用到处判断有没有分章。 */
+function normalizeTab(t) {
+  if (Array.isArray(t.chapters) && t.chapters.length) {
+    return {
+      ...t,
+      ch: Math.min(Math.max(0, t.ch || 0), t.chapters.length - 1),
+      trans: t.trans && !Array.isArray(t.trans) ? t.trans : {},
+    };
+  }
+  return {
+    ...t,
+    chapters: [t.content || ""],
+    ch: 0,
+    trans: Array.isArray(t.trans) ? { 0: t.trans } : {},
+  };
 }
 
 function looksLikeSentence(q) {
@@ -342,15 +702,41 @@ function calcStreak(log) {
 /* ---------- 主组件 ---------- */
 
 export default function App() {
-  const [view, setView] = useState("read");           // read | vocab | stats | review
+  const [view, setView] = useState("read");           // read | vocab | stats | review | settings
   const [topic, setTopic] = useState("");
   const [level, setLevel] = useState("B1");
-  const [chipMode, setChipMode] = useState("daily");  // daily | creator
-  const [chips, setChips] = useState(() => pickChips(TOPIC_POOL));
+  const [chipCat, setChipCat] = useState(TOPIC_CATS[0].id);
+  const [chips, setChips] = useState(() => pickChips(TOPIC_CATS[0].pool));
+  const [realBusy, setRealBusy] = useState(false);
+  const [realErr, setRealErr] = useState("");
 
   const [tabs, setTabs] = useState([]);                 // [{id,title,content,cn_intro,topic,level,woven[],imported,trans}]
   const [activeId, setActiveId] = useState(null);
   const article = useMemo(() => tabs.find((t) => t.id === activeId) || null, [tabs, activeId]);
+
+  /* 当前正在读的那一章。全篇存在 article.chapters 里，
+     但查词、朗读、译文、小测一律只针对当前这一章——
+     这是长文档能读又不撑爆模型的关键。 */
+  const chapters = article?.chapters || [];
+  const chIdx = chapters.length ? Math.min(Math.max(0, article.ch || 0), chapters.length - 1) : 0;
+  const curText = chapters[chIdx] || "";
+  const curTrans = (article?.trans || {})[chIdx] || null;
+  const curWords = useMemo(() => countWords(curText), [curText]);
+  const curMins = Math.max(1, Math.round(curWords / 180)); // 按每分钟约 180 词估
+
+  function gotoCh(next) {
+    if (!article || !chapters.length) return;
+    const n = Math.max(0, Math.min(next, chapters.length - 1));
+    if (n === chIdx) return;
+    hardStop();
+    setTabs((ts) => ts.map((x) => (x.id === article.id ? { ...x, ch: n } : x)));
+    // 换章等于换了篇文章，小测和译文开关都得归零
+    setQuiz({ st: "idle" });
+    setIdeas({ st: "idle" });
+    setShowTrans(false);
+    clickedRef.current = new Set();
+    window.scrollTo({ top: 0 });
+  }
 
   function canOpenNewTab() {
     if (tabs.length >= MAX_TABS) {
@@ -400,10 +786,15 @@ export default function App() {
   const [rev, setRev] = useState(null);                 // {queue,i,flip,ok,ng}
 
   const [prefs, setPrefs] = useState({ theme: "paper", font: "serif", size: 19, voiceURI: "", rate: 1, dictOff: false });
-  const [prefsOpen, setPrefsOpen] = useState(false);
-  const [apiKey, setApiKey] = useState(() => { try { return localStorage.getItem(APIKEY_STORE) || ""; } catch (e) { return ""; } });
-  const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_STORE) || DEFAULT_MODEL; } catch (e) { return DEFAULT_MODEL; } });
+  const [navOpen, setNavOpen] = useState(false);   // 窄屏时侧栏才是抽屉，宽屏一直显示
+  const [providerId, setProviderId] = useState(loadProviderId);
+  const [keyMap, setKeyMap] = useState(loadKeyMap);
+  const [modelMap, setModelMap] = useState(loadModelMap);
+  // 每家服务商各存一份 Key 和模型，切换时不用重新填
+  const apiKey = keyMap[providerId] || "";
+  const model = modelMap[providerId] || providerOf(providerId).defaultModel;
   const [showSetup, setShowSetup] = useState(false);
+  const [providerDraft, setProviderDraft] = useState(loadProviderId);
   const [keyDraft, setKeyDraft] = useState("");
   const [modelDraft, setModelDraft] = useState("");
   const [showTrans, setShowTrans] = useState(false);
@@ -436,7 +827,8 @@ export default function App() {
       if (Array.isArray(v)) setVocab(v);
       const tb = await sGet(TABS_KEY);
       if (tb && Array.isArray(tb.tabs) && tb.tabs.length) {
-        setTabs(tb.tabs);
+        // 老存档没有 chapters 字段，在这里补上，之后全程只有一种形状
+        setTabs(tb.tabs.map(normalizeTab));
         setActiveId(tb.activeId && tb.tabs.some((t) => t.id === tb.activeId) ? tb.activeId : tb.tabs[0].id);
         const cur = tb.tabs.find((t) => t.id === tb.activeId) || tb.tabs[0];
         setTopic(cur.topic || "");
@@ -445,7 +837,7 @@ export default function App() {
         const a = await sGet(ARTICLE_KEY); // 迁移旧版单文章存档
         if (a && a.content) {
           const id = "t" + Date.now();
-          setTabs([{ ...a, id }]);
+          setTabs([normalizeTab({ ...a, id })]);
           setActiveId(id);
           setTopic(a.topic || "");
           if (a.level) setLevel(a.level);
@@ -499,9 +891,18 @@ export default function App() {
     return (us.length ? us : enVoices)[0];
   }
 
-  useEffect(() => { if (loaded) sSet(VOCAB_KEY, vocab); }, [vocab, loaded]);
+  useEffect(() => {
+    if (!loaded) return;
+    // 生词本最要紧，写不进去必须当场说，不能等用户发现词没了
+    if (!sSet(VOCAB_KEY, vocab)) showToast("生词没能存进浏览器——存储写满了，先关掉几篇长文档");
+  }, [vocab, loaded]);
   useEffect(() => { if (loaded) sSet(STATS_KEY, stats); }, [stats, loaded]);
-  useEffect(() => { if (loaded) sSet(TABS_KEY, { tabs, activeId }); }, [tabs, activeId, loaded]);
+  useEffect(() => {
+    if (!loaded) return;
+    if (!sSet(TABS_KEY, { tabs, activeId })) {
+      showToast("存储写满了，这篇文章下次打不开——关掉几篇长文档再试");
+    }
+  }, [tabs, activeId, loaded]);
   useEffect(() => { if (loaded) sSet(PREFS_KEY, prefs); }, [prefs, loaded]);
 
   const appStyle = useMemo(() => ({
@@ -529,6 +930,12 @@ export default function App() {
     () => vocab.filter((v) => rvOf(v).due <= Date.now()),
     [vocab]
   );
+  // 今天新增的生词，直接从 savedAt 算，不用另开一份统计。
+  // 注意必须放在 vocab 声明之后，提到组件顶部会踩暂时性死区导致白屏。
+  const newToday = useMemo(() => {
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    return vocab.filter((v) => (v.savedAt || 0) >= t0.getTime()).length;
+  }, [vocab]);
 
   /* ---- 语音 ---- */
   function cancelSpeech() {
@@ -590,7 +997,7 @@ export default function App() {
   /* ---- 跟读模式 ---- */
   const flatSents = useMemo(() => {
     if (!article) return [];
-    return article.content
+    return curText
       .split(/\n+/).map((p) => p.trim()).filter(Boolean)
       .flatMap((p, pi) =>
         splitSentences(p).map((s, si) => ({ id: `${pi}-${si}`, t: s.trim() }))
@@ -674,7 +1081,7 @@ export default function App() {
 {"title":"英文标题","content":"英文正文，段落之间用\\n\\n分隔","cn_intro":"一句话中文导读，25字以内"}`;
 
     try {
-      const data = await callClaude(prompt, apiKey, model);
+      const data = await callClaude(prompt, apiKey, model, null, providerId);
       if (!data.title || !data.content) throw new Error("bad");
 
       // 实际检测哪些生词真的被织进来了
@@ -696,7 +1103,7 @@ export default function App() {
       const art = {
         id: tabId,
         title: data.title,
-        content: data.content,
+        chapters: [data.content], ch: 0, trans: {},
         cn_intro: data.cn_intro || "",
         topic: theTopic,
         level: theLevel,
@@ -720,7 +1127,7 @@ export default function App() {
       });
       window.scrollTo({ top: 0 });
     } catch (e) {
-      setGenError(errText(e));
+      setGenError(errText(e, providerId));
     } finally {
       setGenLoading(false);
     }
@@ -791,12 +1198,12 @@ translations 按常用程度给 1-3 个；examples 恰好 2 条（使用第一�
 senses 按常用程度排列，最多 4 条；examples 恰好 2 条且包含查询词，难度适中。若词条是短语，phonetic 可为 null。`;
     }
     try {
-      const data = await callClaude(prompt, apiKey, model);
+      const data = await callClaude(prompt, apiKey, model, null, providerId);
       if (!data.type) throw new Error("bad");
       cacheRef.current.set(cacheKey, data);
       finish(data);
     } catch (e) {
-      setDict({ status: "error", term: q, key, sent: sentence, msg: errText(e) });
+      setDict({ status: "error", term: q, key, sent: sentence, msg: errText(e, providerId) });
     }
   }
 
@@ -826,13 +1233,13 @@ senses 按常用程度排列，最多 4 条；examples 恰好 2 条且包含查�
 只返回 JSON，不要任何其他文字或 markdown 代码块：
 {"type":"tr","dir":"${zh ? "zh2en" : "en2zh"}","src":"原文","dst":"译文","note":"一句话点出翻译要点或地道表达（没有可为 null）"}`;
     try {
-      const data = await callClaude(prompt, apiKey, model);
+      const data = await callClaude(prompt, apiKey, model, null, providerId);
       if (data.type !== "tr" || !data.dst) throw new Error("bad");
       if (trunc) data.trunc = true;
       cacheRef.current.set(cacheKey, data);
       setDict({ status: "ok", term: short, data });
     } catch (e) {
-      setDict({ status: "error", term: short, trFail: raw, msg: errText(e) });
+      setDict({ status: "error", term: short, trFail: raw, msg: errText(e, providerId) });
     }
   }
 
@@ -853,7 +1260,7 @@ ${history ? history + "\n" : ""}学习者现在的问题：${question}
 
 words 按相关度最多给 5 个；如果回答里没有值得收藏的词就给空数组。`;
     try {
-      const data = await callClaude(prompt, apiKey, model);
+      const data = await callClaude(prompt, apiKey, model, null, providerId);
       if (!data.answer) throw new Error("bad");
       setWchat((w) => ({
         ...w, busy: false,
@@ -905,12 +1312,12 @@ words 按相关度最多给 5 个；如果回答里没有值得收藏的词就�
 
 parts 按语序给 3-6 项，覆盖整句主干和关键修饰。`;
     try {
-      const data = await callClaude(prompt, apiKey, model);
+      const data = await callClaude(prompt, apiKey, model, null, providerId);
       if (data.type !== "sent") throw new Error("bad");
       cacheRef.current.set(cacheKey, data);
       setDict({ status: "ok", term: s, data });
     } catch (e) {
-      setDict({ status: "error", term: "整句解析", sentFail: s, msg: errText(e) });
+      setDict({ status: "error", term: "整句解析", sentFail: s, msg: errText(e, providerId) });
     }
   }
   function backToWord() {
@@ -921,7 +1328,17 @@ parts 按语序给 3-6 项，覆盖整句主干和关键修饰。`;
   function doSearch() {
     const q = search.trim();
     if (!q) return;
+    // 词典面板只在阅读页显示，所以查词前先回阅读页并展开面板，
+    // 否则在生词本/统计页搜索会「查了但看不到结果」
+    setView("read");
+    openDict();
     lookup(q);
+  }
+
+  /* 侧栏里点任何一项都走这里：切视图 + 收起抽屉（窄屏用） */
+  function go(v) {
+    setView(v);
+    setNavOpen(false);
   }
 
   /* ---- 读后小测 ---- */
@@ -937,14 +1354,14 @@ parts 按语序给 3-6 项，覆盖整句主干和关键修饰。`;
     const prompt = `基于下面这篇英文文章，为中国英语学习者出 3 道单选题：第 1、2 题考文中词汇的含义（${focusLine}），第 3 题考对文章内容的理解。选项要有迷惑性但只有一个正确答案。
 
 文章《${article.title}》：
-${article.content}
+${curText}
 
 只返回 JSON，不要任何其他文字或 markdown 代码块：
 {"questions":[{"q":"题干","options":["选项A","选项B","选项C","选项D"],"answer":0,"explain":"一句话中文解析"}]}
 
 题干用中文提问（考察的英文词/句可直接引用原文），answer 是正确选项的下标 0-3。`;
     try {
-      const data = await callClaude(prompt, apiKey, model);
+      const data = await callClaude(prompt, apiKey, model, null, providerId);
       const qs = (data.questions || []).filter(
         (x) => x.q && Array.isArray(x.options) && x.options.length >= 2
       );
@@ -990,12 +1407,12 @@ ${article.content}
     const prompt = `你是短视频爆款选题策划，擅长"人性、心理、传播"角度。基于下面这篇英文文章的内容，为中文短视频创作者提炼 3 个选题。
 
 文章《${article.title}》：
-${article.content}
+${curText}
 
 只返回 JSON，不要任何其他文字或 markdown 代码块：
 {"ideas":[{"t":"选题标题（有钩子感，15字以内）","a":"一句话切入角度"}]}`;
     try {
-      const data = await callClaude(prompt, apiKey, model);
+      const data = await callClaude(prompt, apiKey, model, null, providerId);
       if (!Array.isArray(data.ideas) || !data.ideas.length) throw new Error("bad");
       setIdeas({ st: "ok", list: data.ideas.slice(0, 3) });
     } catch (e) {
@@ -1033,20 +1450,30 @@ ${article.content}
     if (!t) { setImpErr("先把内容粘贴进来"); return; }
     const latin = (t.match(/[A-Za-z]/g) || []).length;
     if (latin < 40) { setImpErr("看起来不是英文材料——目前只支持导入英文内容来学习"); return; }
-    const { content, truncated, words } = truncateWords(t, 350);
-    if (!content) { setImpErr("没有识别到有效内容"); return; }
-    let title = "";
-    let body = content;
-    const firstLine = content.split("\n")[0].trim();
-    if (firstLine.length <= 70 && (firstLine.match(/[A-Za-z]+/g) || []).length <= 12 && content.includes("\n")) {
-      title = firstLine.replace(/[#*]+/g, "").trim();
-      body = content.split("\n").slice(1).join("\n").trim() || content;
-    } else {
-      title = content.split(/\s+/).slice(0, 8).join(" ") + "…";
+    if (t.length > MAX_DOC_CHARS) {
+      setImpErr(`这份材料有 ${(t.length / 10000).toFixed(0)} 万字符，超过浏览器存储能放下的上限（约 ${MAX_DOC_CHARS / 10000} 万）。拆成几份分别导入吧`);
+      return;
     }
+
+    // 第一行像标题就摘出来当标题，剩下的正文再分章
+    let title = "";
+    let body = t;
+    const firstLine = t.split("\n")[0].trim();
+    if (firstLine.length <= 70 && countWords(firstLine) <= 12 && t.includes("\n")) {
+      title = firstLine.replace(/[#*]+/g, "").trim();
+      body = t.split("\n").slice(1).join("\n").trim() || t;
+    } else {
+      title = t.split(/\s+/).slice(0, 8).join(" ") + "…";
+    }
+
+    const chs = splitChapters(body);
+    if (!chs.length || !chs[0]) { setImpErr("没有识别到有效内容"); return; }
+    const words = countWords(body);
     finishImport({
-      title, content: body,
-      cn_intro: truncated ? `材料较长，已截取前约 ${words} 词（保持完整句子），确保查词、小测、翻译稳定` : "",
+      title, chapters: chs, ch: 0, trans: {},
+      cn_intro: chs.length > 1
+        ? `全文约 ${words} 词，已分成 ${chs.length} 章。查词、译文、小测都只针对当前这一章，读完一章点「下一章」继续`
+        : "",
       topic: label, level, imported: true,
     });
   }
@@ -1054,6 +1481,12 @@ ${article.content}
   async function importFromUrl() {
     const url = impUrl.trim();
     if (!/^https?:\/\//i.test(url)) { setImpErr("请粘贴以 http(s):// 开头的完整网址"); return; }
+    if (!providerOf(providerId).webSearch) {
+      // 联网抓取依赖服务商提供搜索工具，目前只有 OpenRouter 支持；
+      // 别的服务商没有这个能力，硬发过去只会让模型凭空编内容
+      setImpErr(`当前服务商（${providerOf(providerId).name}）不支持联网抓取网页。请改用「粘贴文本」导入，或到设置里切换成 OpenRouter`);
+      return;
+    }
     if (impBusy) return;
     setImpBusy(true);
     setImpErr("");
@@ -1065,21 +1498,78 @@ ${article.content}
 
 如果实在无法获取该页面的英文内容，返回：{"error":"一句话中文原因"}`;
     try {
-      const data = await callClaude(prompt, apiKey, model, [{ type: "openrouter:web_search" }]);
+      const data = await callClaude(prompt, apiKey, model, [{ type: "openrouter:web_search" }], providerId);
       if (data.error || !data.content) throw new Error(data.error || "empty");
-      const { content, truncated } = truncateWords(data.content, 350);
-      const latin = (content.match(/[A-Za-z]/g) || []).length;
+      const latin = (data.content.match(/[A-Za-z]/g) || []).length;
       if (latin < 40) throw new Error("thin");
+      const chs = splitChapters(data.content);
       finishImport({
         title: data.title || hostOf(url),
-        content,
-        cn_intro: truncated ? "内容较长，已截取（保持完整句子）" : "",
+        chapters: chs, ch: 0, trans: {},
+        srcUrl: url, srcSite: hostOf(url),
+        cn_intro: chs.length > 1 ? `抓到约 ${countWords(data.content)} 词，已分成 ${chs.length} 章` : "",
         topic: hostOf(url), level, imported: true,
       });
     } catch (e) {
       setImpErr("没抓到这个页面的英文内容——最稳的办法：把正文（或视频字幕）复制过来，用「粘贴文本」导入");
     } finally {
       setImpBusy(false);
+    }
+  }
+
+  /* 按分类联网找一篇**真实**文章。
+     和「生成文章」的根本区别：这里的正文来自真实网页，会带上可点开核对的原始链接。
+     不做这个功能而让模型「标注出处」是不行的——它会编出看着很像真的链接。 */
+  /* 找真实文章。传了主题就按主题搜，没传就按当前分类随便找一篇。 */
+  async function fetchRealArticle(theTopic) {
+    if (realBusy) return;
+    if (!providerOf(providerId).webSearch) {
+      setRealErr(`找真实文章要靠服务商的联网搜索，当前的 ${providerOf(providerId).name} 不支持。去设置里换成 OpenRouter，或者用右边的「AI 现写」——但那是编的，不是真实报道`);
+      return;
+    }
+    if (!canOpenNewTab()) return;
+    setRealBusy(true);
+    setRealErr("");
+    const cat = catOf(chipCat);
+    const want = (typeof theTopic === "string" && theTopic.trim())
+      ? `主题是「${theTopic.trim()}」`
+      : `主题属于「${cat.name}」领域`;
+    const prompt = `用网络搜索找一篇**真实存在**的英文文章，${want}，最好是最近一年内的科普或报道。
+
+要求：
+- 必须是你通过搜索真实访问到的页面，不能凭记忆编造
+- url 必须是完整的 http(s) 网址，且确实是这篇文章的地址
+- content 从原文摘录，保持原文措辞，不要改写，最多 320 词，挑最完整可读的部分
+- 难度控制在${LEVELS.find((l) => l.id === level)?.tag} 左右，太难的话挑相对易读的段落
+
+只返回 JSON，不要任何其他文字或 markdown 代码块：
+{"title":"文章英文标题","site":"网站名，如 BBC / Nature","url":"https://完整原文地址","date":"发布日期，不确定就空字符串","content":"英文原文摘录"}
+
+如果搜不到可靠的，返回：{"error":"一句话中文原因"}`;
+    try {
+      const data = await callClaude(prompt, apiKey, model, [{ type: "openrouter:web_search" }], providerId);
+      if (data.error || !data.content) throw new Error("empty");
+      // 宁可不给，也不给一个编出来的链接
+      if (!/^https?:\/\/\S+\.\S+/i.test(String(data.url || ""))) throw new Error("nourl");
+      if ((data.content.match(/[A-Za-z]/g) || []).length < 200) throw new Error("thin");
+      const chs = splitChapters(data.content);
+      finishImport({
+        title: data.title || "Untitled",
+        chapters: chs, ch: 0, trans: {},
+        srcUrl: data.url,
+        srcSite: data.site || hostOf(data.url),
+        srcDate: data.date || "",
+        cn_intro: `来自 ${data.site || hostOf(data.url)} 的真实文章${data.date ? `（${data.date}）` : ""}，正文为原文摘录。点上方来源链接可核对原文`,
+        topic: (typeof theTopic === "string" && theTopic.trim()) || cat.name, level, imported: true,
+      });
+    } catch (e) {
+      setRealErr(
+        e.message === "nourl"
+          ? "模型没给出可核对的原文链接，这一篇不予采用——宁可不给，也不给编造的出处。再点一次试试"
+          : "没搜到合适的真实文章。换个说法或换个分类再试；实在找不到就用「AI 现写」，但那是编的"
+      );
+    } finally {
+      setRealBusy(false);
     }
   }
 
@@ -1110,10 +1600,10 @@ ${article.content}
   async function toggleTrans() {
     if (!article) return;
     if (showTrans) { setShowTrans(false); return; }
-    if (article.trans) { setShowTrans(true); return; }
+    if (curTrans) { setShowTrans(true); return; }
     if (transBusy) return;
     setTransBusy(true);
-    const paras = article.content.split(/\n+/).map((p) => p.trim()).filter(Boolean);
+    const paras = curText.split(/\n+/).map((p) => p.trim()).filter(Boolean);
     const prompt = `把下面的英文文章逐段翻译成简洁、自然的中文。原文共 ${paras.length} 段，请保持相同的分段。
 
 ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
@@ -1122,14 +1612,15 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
 {"trans":["第1段中文译文","第2段中文译文"]}
 数组长度必须为 ${paras.length}。`;
     try {
-      const data = await callClaude(prompt, apiKey, model);
+      const data = await callClaude(prompt, apiKey, model, null, providerId);
       let tr = data.trans;
       if (!Array.isArray(tr) || !tr.length) throw new Error("bad");
       if (tr.length > paras.length) {
         tr = tr.slice(0, paras.length - 1).concat(tr.slice(paras.length - 1).join(" "));
       }
       while (tr.length < paras.length) tr.push("");
-      setTabs((ts) => ts.map((x) => (x.id === article.id ? { ...x, trans: tr } : x)));
+      // 译文按章号存，换章不会串台
+      setTabs((ts) => ts.map((x) => (x.id === article.id ? { ...x, trans: { ...x.trans, [chIdx]: tr } } : x)));
       setShowTrans(true);
     } catch (e) {
       showToast("翻译失败了，再点一次重试");
@@ -1275,28 +1766,49 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
   const dictIsSaved = dictSavedKey ? savedKeys.has(dictSavedKey) : false;
 
   if (!apiKey || showSetup) {
+    // 设置页没有侧栏，得关掉 .app 的两列网格，否则左边会空出一条
     return (
-      <div className="app" style={appStyle}>
+      <div className="app solo" style={appStyle}>
         <style>{CSS}</style>
         <SetupView
           hasKey={!!apiKey}
+          providerDraft={providerDraft}
+          onPickProvider={(id) => {
+            // 换服务商时，自动带出之前给这家存过的 Key 和模型
+            setProviderDraft(id);
+            setKeyDraft(keyMap[id] || "");
+            setModelDraft(modelMap[id] || "");
+          }}
           keyDraft={keyDraft}
           setKeyDraft={setKeyDraft}
           modelDraft={modelDraft}
           setModelDraft={setModelDraft}
+          showToast={showToast}
           onSave={() => {
             const k = keyDraft.trim();
             if (!k) { showToast("请先粘贴 API Key"); return; }
-            const m = modelDraft.trim() || DEFAULT_MODEL;
-            try { localStorage.setItem(APIKEY_STORE, k); localStorage.setItem(MODEL_STORE, m); } catch (e) {}
-            setApiKey(k);
-            setModel(m);
+            const pid = providerDraft;
+            const m = modelDraft.trim() || providerOf(pid).defaultModel;
+            const nextKeys = { ...keyMap, [pid]: k };
+            const nextModels = { ...modelMap, [pid]: m };
+            sSet(KEYS_STORE, nextKeys);
+            sSet(MODELS_STORE, nextModels);
+            try { localStorage.setItem(PROVIDER_STORE, pid); } catch (e) {}
+            setKeyMap(nextKeys);
+            setModelMap(nextModels);
+            setProviderId(pid);
             setShowSetup(false);
-            showToast("已连接，开始使用吧");
+            showToast(`已连接 ${providerOf(pid).name}，开始使用吧`);
           }}
           onClear={() => {
-            try { localStorage.removeItem(APIKEY_STORE); } catch (e) {}
-            setApiKey(""); setKeyDraft("");
+            // 只清掉当前这一家的密钥，其他服务商的保留
+            const pid = providerDraft;
+            const nextKeys = { ...keyMap };
+            delete nextKeys[pid];
+            sSet(KEYS_STORE, nextKeys);
+            setKeyMap(nextKeys);
+            setKeyDraft("");
+            showToast(`已清除 ${providerOf(pid).name} 的密钥`);
           }}
           onBack={() => setShowSetup(false)}
         />
@@ -1309,125 +1821,104 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
     <div className="app" style={appStyle}>
       <style>{CSS}</style>
 
-      {/* ======= 顶栏 ======= */}
-      <header className="top">
-        <div className="top-in">
-          <button className="brand2" onClick={() => setView("read")}>007学英语</button>
+      {/* ======= 左侧栏 ======= */}
+      {navOpen && <div className="sbmask" onClick={() => setNavOpen(false)} />}
+      <aside className={navOpen ? "sidebar open" : "sidebar"}>
+        <button className="brand2" onClick={() => go("read")}>
+          <span className="logo">007</span>学英语
+        </button>
 
-          <nav className="nav2" aria-label="视图切换">
-            <button
-              className={view === "read" ? "nl on" : "nl"}
-              onClick={() => setView("read")}
-            >阅读</button>
-            <button
-              className={view === "vocab" || view === "review" ? "nl on" : "nl"}
-              onClick={() => setView("vocab")}
-            >
-              生词本{vocab.length > 0 && <span className="nbadge">{vocab.length}</span>}
-            </button>
-            <button
-              className={view === "stats" ? "nl on" : "nl"}
-              onClick={() => setView("stats")}
-            >统计</button>
-          </nav>
+        <nav className="snav" aria-label="视图切换">
+          <button className={view === "read" ? "sl on" : "sl"} onClick={() => go("read")}>
+            <BookOpen size={16} /> 阅读
+          </button>
+          <button
+            className={view === "vocab" ? "sl on" : "sl"}
+            onClick={() => go("vocab")}
+          >
+            <Bookmark size={16} /> 生词本
+            {vocab.length > 0 && <span className="sbadge">{vocab.length}</span>}
+          </button>
+          <button
+            className={view === "review" ? "sl on" : "sl"}
+            onClick={() => { startReview(); setNavOpen(false); }}
+          >
+            <RotateCcw size={16} /> 复习
+            {dueList.length > 0 && <span className="sbadge hot">{dueList.length}</span>}
+          </button>
+          <button className={view === "stats" ? "sl on" : "sl"} onClick={() => go("stats")}>
+            <BarChart3 size={16} /> 统计
+          </button>
+        </nav>
 
-          <div className="prefwrap">
-            <button className="gearbtn" onClick={() => setPrefsOpen((o) => !o)}
-              aria-label="外观设置" title="外观">
-              <Palette size={17} />
-            </button>
-            {prefsOpen && (
-              <>
-              <div className="popmask" onClick={() => setPrefsOpen(false)} />
-              <div className="pop">
-                <div className="pop-row">
-                  <span className="pop-l">背景</span>
-                  <div className="swrow">
-                    {Object.entries(THEMES).map(([id, t]) => (
-                      <button key={id}
-                        className={prefs.theme === id ? "sw on" : "sw"}
-                        style={{ background: t.swatch }}
-                        title={t.name}
-                        aria-label={t.name}
-                        onClick={() => setPrefs((p) => ({ ...p, theme: id }))}
-                      >{prefs.theme === id ? "✓" : ""}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="pop-row">
-                  <span className="pop-l">正文字体</span>
-                  <div className="chipswitch">
-                    <button className={prefs.font === "serif" ? "cs on" : "cs"}
-                      onClick={() => setPrefs((p) => ({ ...p, font: "serif" }))}
-                      style={{ fontFamily: "var(--serif)" }}>衬线 Aa</button>
-                    <button className={prefs.font === "sans" ? "cs on" : "cs"}
-                      onClick={() => setPrefs((p) => ({ ...p, font: "sans" }))}>黑体 Aa</button>
-                  </div>
-                </div>
-                <div className="pop-row">
-                  <span className="pop-l">字号</span>
-                  <div className="sizerow">
-                    <button className="szbtn" aria-label="调小"
-                      onClick={() => setPrefs((p) => ({ ...p, size: FONT_SIZES[Math.max(0, FONT_SIZES.indexOf(p.size) - 1)] }))}
-                    >A−</button>
-                    <span className="szval">{prefs.size}</span>
-                    <button className="szbtn" aria-label="调大"
-                      onClick={() => setPrefs((p) => ({ ...p, size: FONT_SIZES[Math.min(FONT_SIZES.length - 1, FONT_SIZES.indexOf(p.size) + 1)] }))}
-                    >A＋</button>
-                  </div>
-                </div>
-                <div className="pop-div" />
-                <div className="pop-row">
-                  <span className="pop-l">朗读语速</span>
-                  <div className="chipswitch">
-                    {[["0.75", 0.75, "慢"], ["0.9", 0.9, "稍慢"], ["1", 1, "正常"], ["1.15", 1.15, "快"]].map(([k, val, lb]) => (
-                      <button key={k}
-                        className={Math.abs((prefs.rate || 1) - val) < 0.01 ? "cs on" : "cs"}
-                        onClick={() => setPrefs((p) => ({ ...p, rate: val }))}
-                      >{lb}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="pop-row pop-col">
-                  <span className="pop-l">朗读声音</span>
-                  <select
-                    className="vsel"
-                    value={prefs.voiceURI || ""}
-                    onChange={(e) => setPrefs((p) => ({ ...p, voiceURI: e.target.value }))}
-                  >
-                    <option value="">自动（已挑选设备里最佳）</option>
-                    {enVoices.slice(0, 12).map((v) => (
-                      <option key={v.voiceURI} value={v.voiceURI}>
-                        {v.name} · {v.lang}
-                      </option>
-                    ))}
-                  </select>
-                  <button className="btn-gh vtest"
-                    onClick={() => speak("Hello! I will be your reading voice. Let's read something together.", "en-US")}
-                  ><Volume2 size={14} /> 试听</button>
-                  <p className="pop-hint">音质取决于设备内置语音——Windows 用 Edge 浏览器、苹果设备上效果最好。</p>
-                </div>
-                <div className="pop-div" />
-                <div className="pop-row pop-col">
-                  <span className="pop-l">API 连接</span>
-                  <p className="pop-hint" style={{ margin: "0 0 2px" }}>
-                    当前模型：<code>{model}</code>
-                  </p>
-                  <button className="btn-gh"
-                    onClick={() => { setKeyDraft(apiKey); setModelDraft(model); setShowSetup(true); setPrefsOpen(false); }}
-                  ><KeyRound size={14} /> 更换 Key / 模型</button>
-                </div>
-                <button className="pop-reset"
-                  onClick={() => setPrefs({ theme: "paper", font: "serif", size: 19, voiceURI: "", rate: 1, dictOff: false })}
-                >恢复默认外观</button>
-              </div>
-              </>
-            )}
-          </div>
+        <div className="sdiv" />
+
+        {/* 原来的标签页条并进侧栏，省掉正文上方一整行 */}
+        <div className="slbl">
+          最近打开
+          <button className="sadd" onClick={() => { openBlankTab(); go("read"); }}
+            aria-label="新开一页" title="新开一页"><Plus size={13} /></button>
         </div>
-      </header>
+        <div className="stabs">
+          {tabs.length === 0 && <p className="sempty">还没有文章</p>}
+          {tabs.map((t) => (
+            <div key={t.id} className={view === "read" && t.id === activeId ? "st on" : "st"}>
+              <button className="st-b" onClick={() => { switchTab(t.id); go("read"); }} title={t.title}>
+                {t.imported && <FileUp size={11} />}
+                <span className="st-tt">{t.title || "未命名"}</span>
+                {t.chapters?.length > 1 && (
+                  <span className="st-ch">{(t.ch || 0) + 1}/{t.chapters.length}</span>
+                )}
+              </button>
+              <button className="st-x" onClick={() => closeTab(t.id)}
+                aria-label={`关闭「${t.title}」`}><X size={11} /></button>
+            </div>
+          ))}
+        </div>
 
-      <main className={prefs.dictOff ? "layout nodict" : "layout"}>
+        <button
+          className={view === "settings" ? "sl sl-set on" : "sl sl-set"}
+          onClick={() => go("settings")}
+        >
+          <Settings size={16} /> 设置
+        </button>
+
+        {(streak > 0 || (stats.total || 0) > 0) && (
+          <div className="sfoot">
+            <b><Flame size={13} /> 连续学习 {streak} 天</b>
+            <span>今天读了 {(stats.log[dateStr()] || {}).a || 0} 篇 · 累计 {stats.total || 0} 篇</span>
+          </div>
+        )}
+      </aside>
+
+      <div className="mainwrap">
+        {/* ======= 细顶条：查词 + 外观 ======= */}
+        <header className="topbar">
+          <button className="menubtn" onClick={() => setNavOpen(true)} aria-label="菜单">
+            <Menu size={18} />
+          </button>
+          <div className="tsearch">
+            <Search size={14} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") doSearch(); }}
+              placeholder="查词 / 翻译句子 · 中英互查"
+              aria-label="查词"
+            />
+          </div>
+
+          <button
+            className={view === "settings" ? "gearbtn on" : "gearbtn"}
+            onClick={() => go("settings")}
+            aria-label="设置" title="设置"
+          >
+            <Palette size={17} /> <span className="gearlbl">外观与模型</span>
+          </button>
+        </header>
+
+        {/* 词典只在阅读页有意义，生词本/统计/复习页要腾出整幅宽度 */}
+        <main className={prefs.dictOff || view !== "read" ? "layout nodict" : "layout"}>
         {/* ======= 左：主区域 ======= */}
         <section className="mainc">
           {view === "review" ? (
@@ -1448,6 +1939,27 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               dueCount={dueList.length}
               level={LEVELS.find((l) => l.id === level)}
               onGoReview={startReview}
+            />
+          ) : view === "settings" ? (
+            <SettingsView
+              prefs={prefs}
+              setPrefs={setPrefs}
+              enVoices={enVoices}
+              onTestVoice={() => speak("Hello! I will be your reading voice. Let's read something together.", "en-US")}
+              providerName={providerOf(providerId).name}
+              model={model}
+              onChangeProvider={() => {
+                setProviderDraft(providerId);
+                setKeyDraft(apiKey);
+                setModelDraft(model);
+                setShowSetup(true);
+              }}
+              vocabCount={vocab.length}
+              onCopyVocab={copyVocab}
+              onDownloadVocab={downloadVocab}
+              confirmClear={confirmClear}
+              setConfirmClear={setConfirmClear}
+              onClearVocab={() => { setVocab([]); setConfirmClear(false); showToast("已清空生词本"); }}
             />
           ) : view === "vocab" ? (
             <VocabView
@@ -1470,36 +1982,66 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
             />
           ) : (
             <>
-              {tabs.length > 0 && (
-                <TabBar tabs={tabs} activeId={activeId} onSwitch={switchTab} onClose={closeTab} onNew={openBlankTab} />
-              )}
               {!article && !genLoading ? (
             /* ---- 空状态 / 生成器 ---- */
-            <div className="hero">
-              <p className="eyebrow">
-                英 语 分 级 阅 读{streak > 0 && <> · <Flame size={12} /> 连续 {streak} 天</>}
-              </p>
-              <h1 className="hero-t">
-                今天想<span className="mk">读</span>点什么？
-              </h1>
+            <div className="home">
+              <h1 className="home-t">今天想读点什么？</h1>
+              <p className="home-sub">输入主题，去网上找一篇真实的英文文章来读——有出处、可核对。</p>
 
+              <div className="genbox">
               <div className="genrow">
                 <input
                   className="topic-in"
                   value={topic}
                   onChange={(e) => setTopic(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") generateArticle(); }}
-                  placeholder="输入任意主题，中英文都行，AI 现写一篇给你"
+                  onKeyDown={(e) => { if (e.key === "Enter") fetchRealArticle(topic); }}
+                  placeholder="输入主题，去网上找一篇真实的英文文章"
                 />
-                <button className="btn-pri" onClick={() => generateArticle()}>
-                  <Sparkles size={16} /> 生成文章
+                <button className="btn-pri" onClick={() => fetchRealArticle(topic)} disabled={realBusy}>
+                  {realBusy
+                    ? <><Loader2 size={16} className="spin" /> 搜索中…</>
+                    : <><Globe size={16} /> 找真实文章</>}
                 </button>
               </div>
 
-              <button className="lnk-imp" onClick={() => { setImpOpen((o) => !o); setImpErr(""); }}>
-                <Upload size={13} /> 或者，导入自己的材料读（粘贴 / 文件 / 网址）
-                <ChevronDown size={13} className={impOpen ? "flip" : ""} />
-              </button>
+              {/* AI 现写降为备选：它写的是编的，只当语言材料用 */}
+              <div className="genalt">
+                <span className="genalt-t">
+                  找不到合适的，或者只想练语言？
+                </span>
+                <button className="btn-gh" onClick={() => generateArticle()} disabled={genLoading}>
+                  <Sparkles size={14} /> 让 AI 现写一篇
+                </button>
+                <span className="genalt-h">内容是编的，别当事实</span>
+              </div>
+
+              {!providerOf(providerId).webSearch && (
+                <div className="genwarn">
+                  当前服务商 <b>{providerOf(providerId).name}</b> 不支持联网搜索，找不了真实文章。
+                  去<button className="lnk" onClick={() => go("settings")}>设置</button>换成 OpenRouter 即可。
+                </div>
+              )}
+
+              <div className="genfoot">
+                <span className="chips-l">难度</span>
+                {LEVELS.map((l) => (
+                  <button
+                    key={l.id}
+                    className={l.id === level ? "lvt on" : "lvt"}
+                    title={l.tag}
+                    onClick={() => { setLevel(l.id); setStats((st) => ({ ...st, lv: l.id })); }}
+                  >{l.label}</button>
+                ))}
+                <span className="lv-tag" title="真实文章的难度由原文决定，这里只是搜索时的偏好">
+                  {LEVELS.find((l) => l.id === level)?.tag}
+                </span>
+                <button className="lnk-imp" onClick={() => { setImpOpen((o) => !o); setImpErr(""); }}>
+                  <Upload size={13} /> 导入自己的材料
+                  <ChevronDown size={13} className={impOpen ? "flip" : ""} />
+                </button>
+              </div>
+
+              {realErr && <div className="err">{realErr}</div>}
 
               {impOpen && (
                 <div className="imp">
@@ -1560,67 +2102,123 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                 </div>
               )}
 
-              <div className="lvline">
-                <span className="chips-l">难度</span>
-                {LEVELS.map((l) => (
-                  <button
-                    key={l.id}
-                    className={l.id === level ? "lvt on" : "lvt"}
-                    title={l.tag}
-                    onClick={() => { setLevel(l.id); setStats((st) => ({ ...st, lv: l.id })); }}
-                  >{l.label}</button>
-                ))}
-                <span className="lv-tag">{LEVELS.find((l) => l.id === level)?.tag}</span>
-              </div>
-
-              <div className="chips">
-                <div className="chipswitch">
-                  <button
-                    className={chipMode === "daily" ? "cs on" : "cs"}
-                    onClick={() => { setChipMode("daily"); setChips(pickChips(TOPIC_POOL)); }}
-                  >日常</button>
-                  <button
-                    className={chipMode === "creator" ? "cs on" : "cs"}
-                    title="心理学与人性主题——练阅读顺手给短视频攒选题"
-                    onClick={() => { setChipMode("creator"); setChips(pickChips(CREATOR_POOL)); }}
-                  ><Clapperboard size={13} /> 创作素材</button>
-                </div>
-                {chips.map((c) => (
-                  <button key={c} className="chip" onClick={() => setTopic(c)}>{c}</button>
-                ))}
-                <button
-                  className="chip dice"
-                  onClick={() => setChips(pickChips(chipMode === "daily" ? TOPIC_POOL : CREATOR_POOL))}
-                  aria-label="换一批"
-                ><Dices size={14} /></button>
-              </div>
-
               {genError && (
                 <div className="err">
                   {genError} <button className="lnk" onClick={() => generateArticle()}>重试</button>
                 </div>
               )}
+              </div>{/* /genbox */}
+
+              {/* 数据条：全部来自已有数据，没有新增统计 */}
+              <div className="statrow">
+                <div className="stt">
+                  {newToday > 0 && <span className="stpill">+{newToday} 今天</span>}
+                  <b>{vocab.length}</b><span>生词本</span>
+                </div>
+                <button className={dueList.length ? "stt go" : "stt"}
+                  onClick={() => dueList.length && startReview()}>
+                  <b>{dueList.length}</b><span>{dueList.length ? "待复习 · 点开始" : "待复习"}</span>
+                </button>
+                <div className="stt">
+                  <b>{streak}</b><span>连续天数</span>
+                </div>
+                <div className="stt">
+                  <b>{stats.total || 0}</b><span>累计读完</span>
+                </div>
+              </div>
+
+              {tabs.length > 0 && (
+                <>
+                  <div className="sechead"><h2>继续读</h2></div>
+                  <div className="cardgrid">
+                    {tabs.map((t) => (
+                      <button key={t.id} className="ccard" onClick={() => switchTab(t.id)}>
+                        <span className={t.srcUrl ? "ctag real" : "ctag"}>
+                          {t.srcUrl ? "真实来源"
+                            : t.imported ? "导入"
+                            : (LEVELS.find((l) => l.id === t.level)?.label || "文章")}
+                        </span>
+                        <b>{t.title || "未命名"}</b>
+                        <p>
+                          {t.topic || "未分类"}
+                          {" · 约 "}
+                          {countWords((t.chapters || []).join(" "))} 词
+                        </p>
+                        {t.chapters?.length > 1 && (
+                          <>
+                            <div className="cprog">
+                              <i style={{ width: `${(((t.ch || 0) + 1) / t.chapters.length) * 100}%` }} />
+                            </div>
+                            <div className="cmeta">读到第 {(t.ch || 0) + 1} / {t.chapters.length} 章</div>
+                          </>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <div className="sechead">
+                <h2>换个话题试试</h2>
+                <div className="sechead-r">
+                  <button className="btn-gh"
+                    onClick={() => setChips(pickChips(catOf(chipCat).pool))}
+                  ><Dices size={14} /> 换一批</button>
+                  <button className="btn-gh pri" onClick={() => fetchRealArticle()} disabled={realBusy}>
+                    {realBusy
+                      ? <><Loader2 size={14} className="spin" /> 搜索中…</>
+                      : <><Globe size={14} /> 本类随机一篇</>}
+                  </button>
+                </div>
+              </div>
+
+              <div className="catrow">
+                {TOPIC_CATS.map((c) => (
+                  <button key={c.id}
+                    className={c.id === chipCat ? "cat on" : "cat"}
+                    onClick={() => { setChipCat(c.id); setChips(pickChips(c.pool)); setRealErr(""); }}
+                  >
+                    {c.id === "creator" && <Clapperboard size={12} />}
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+
+              <div className="cardgrid tight">
+                {chips.map((c) => (
+                  <button key={c} className="ccard" onClick={() => { setTopic(c); fetchRealArticle(c); }}>
+                    <b>{c}</b>
+                    <p>{catOf(chipCat).name} · 点一下去搜真文章</p>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             /* ---- 文章 ---- */
             <div className="article">
               <div className="art-bar">
-                <button className="btn-gh" onClick={openBlankTab}>
-                  <Plus size={15} /> 新文章
+                <button className="btn-gh pri" onClick={toggleReadArticle} disabled={genLoading}>
+                  {reading ? <Square size={14} /> : <Play size={14} />}
+                  {reading ? "停止朗读" : "朗读全文"}
                 </button>
-                <div className="art-acts">
-                  <button className="btn-gh" onClick={toggleTrans} disabled={genLoading || transBusy}>
-                    {transBusy ? <Loader2 size={14} className="spin" /> : <Languages size={14} />}
-                    {transBusy ? "翻译中…" : showTrans ? "隐藏译文" : "译文"}
+                <button className="btn-gh" onClick={toggleTrans} disabled={genLoading || transBusy}>
+                  {transBusy ? <Loader2 size={14} className="spin" /> : <Languages size={14} />}
+                  {transBusy ? "翻译中…" : showTrans ? "隐藏中文" : "显示中文"}
+                </button>
+                <button className="btn-gh" onClick={startShadow} disabled={genLoading || shadow.on}>
+                  <RotateCcw size={14} /> 跟读练习
+                </button>
+                <button className="btn-gh" onClick={startQuiz}
+                  disabled={genLoading || quiz.st === "loading" || quiz.st === "on"}>
+                  {quiz.st === "loading"
+                    ? <><Loader2 size={14} className="spin" /> 出题中…</>
+                    : <><ClipboardCheck size={14} /> 做小测</>}
+                </button>
+                {!article?.imported && (
+                  <button className="btn-gh" onClick={() => generateArticle(article.topic)} disabled={genLoading}>
+                    <RefreshCw size={14} /> 换一篇
                   </button>
-                  <button className="btn-gh" onClick={toggleReadArticle} disabled={genLoading}>
-                    {reading ? <Square size={14} /> : <Play size={14} />}
-                    {reading ? "停止" : "朗读"}
-                  </button>
-                  <button className="btn-gh" onClick={startShadow} disabled={genLoading || shadow.on}>
-                    <RotateCcw size={14} /> 跟读
-                  </button>
-                </div>
+                )}
               </div>
 
               {genLoading ? (
@@ -1628,16 +2226,32 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               ) : (
                 <>
                   <div className="art-meta">
-                    {article.imported ? (
-                      <>导入材料 · 来源「{article.topic}」</>
+                    {article.srcUrl ? (
+                      <>
+                        <span className="mtag real"><Globe size={11} /> 真实来源</span>
+                        <a className="srclink" href={article.srcUrl} target="_blank" rel="noreferrer">
+                          {article.srcSite || hostOf(article.srcUrl)}
+                          <ExternalLink size={11} />
+                        </a>
+                        {article.srcDate && <><span className="dotsep">·</span>{article.srcDate}</>}
+                        <span className="dotsep">·</span>约 {curWords} 词
+                        <span className="dotsep">·</span>{curMins} 分钟
+                      </>
+                    ) : article.imported ? (
+                      <>
+                        <span className="mtag">导入</span>
+                        来源「{article.topic}」
+                        <span className="dotsep">·</span>约 {curWords} 词
+                        <span className="dotsep">·</span>{curMins} 分钟
+                      </>
                     ) : (
                       <>
                         <span className="lvsel">
-                          <button className="meta-btn" onClick={() => setLvMenu((o) => !o)}>
+                          <button className="mtag btn" onClick={() => setLvMenu((o) => !o)}>
                             {LEVELS.find((l) => l.id === article.level)?.label}
-                            {" · "}
-                            {LEVELS.find((l) => l.id === article.level)?.tag}
-                            <ChevronDown size={12} />
+                            {" "}
+                            {article.level}
+                            <ChevronDown size={11} />
                           </button>
                           {lvMenu && (
                             <>
@@ -1658,11 +2272,10 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                             </>
                           )}
                         </span>
+                        约 {curWords} 词
+                        <span className="dotsep">·</span>{curMins} 分钟
+                        <span className="mtag ai" title="内容由 AI 现写，不是真实报道，不要当作事实引用">AI 现写</span>
                         <span className="dotsep">·</span>主题「{article.topic}」
-                        <span className="dotsep">·</span>
-                        <button className="meta-btn" onClick={() => generateArticle(article.topic)} disabled={genLoading}>
-                          <RefreshCw size={12} /> 换一篇
-                        </button>
                         <span className="dotsep">·</span>
                         <button className="meta-btn"
                           onClick={() => generateArticle(article.topic, article.level, { newTab: true })}
@@ -1674,7 +2287,24 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                     )}
                   </div>
                   <h2 className="art-title">{article.title}</h2>
-                  {article.cn_intro && <p className="art-intro">{article.cn_intro}</p>}
+                  {chapters.length > 1 && (
+                    <div className="chbar">
+                      <button className="btn-gh" onClick={() => gotoCh(chIdx - 1)} disabled={chIdx === 0}>
+                        <ChevronLeft size={14} /> 上一章
+                      </button>
+                      <div className="chprog">
+                        <span className="chnum">第 {chIdx + 1} / {chapters.length} 章</span>
+                        <div className="chtrack">
+                          <i style={{ width: `${((chIdx + 1) / chapters.length) * 100}%` }} />
+                        </div>
+                      </div>
+                      <button className="btn-gh" onClick={() => gotoCh(chIdx + 1)}
+                        disabled={chIdx === chapters.length - 1}>
+                        下一章 <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  )}
+                  {article.cn_intro && chIdx === 0 && <p className="art-intro">{article.cn_intro}</p>}
                   {article.woven?.length > 0 && (
                     <p className="woven-note">
                       <Brain size={13} /> 本篇织入了你的生词：{article.woven.join("、")}，留意重逢 👀
@@ -1707,8 +2337,8 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                     }}
                   >
                   <ArticleBody
-                    content={article.content}
-                    trans={article.trans}
+                    content={curText}
+                    trans={curTrans}
                     showTrans={showTrans}
                     activeKey={dict.key}
                     savedSurfaces={savedSurfaces}
@@ -1725,15 +2355,6 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                   <div className="after-row">
                     <button
                       className="btn-soft"
-                      onClick={startQuiz}
-                      disabled={quiz.st === "loading" || quiz.st === "on"}
-                    >
-                      {quiz.st === "loading"
-                        ? <><Loader2 size={15} className="spin" /> 出题中…</>
-                        : <><ClipboardCheck size={15} /> 读后小测</>}
-                    </button>
-                    <button
-                      className="btn-soft"
                       onClick={startIdeas}
                       disabled={ideas.st === "loading"}
                     >
@@ -1741,6 +2362,11 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                         ? <><Loader2 size={15} className="spin" /> 提炼中…</>
                         : <><Clapperboard size={15} /> 提炼中文选题</>}
                     </button>
+                    {chIdx < chapters.length - 1 && (
+                      <button className="btn-soft" onClick={() => gotoCh(chIdx + 1)}>
+                        下一章 <ChevronRight size={15} />
+                      </button>
+                    )}
                   </div>
 
                   {quiz.st === "err" && (
@@ -1777,13 +2403,14 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               <X size={16} />
             </button>
 
+            {/* 面板内也留一个查词框：手机上词典是底部抽屉，够不着顶栏那个 */}
             <div className="dsearch">
               <Search size={14} />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") doSearch(); }}
-                placeholder="查词 / 翻译句子 · 中英互查"
+                placeholder="查词 / 翻译句子"
                 aria-label="查词"
               />
             </div>
@@ -1798,7 +2425,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
 
             {dict.status === "loading" && (
               <div className="dict-load">
-                <span className="hw serif">{dict.sentMode ? "整句解析" : dict.term}</span>
+                <span className="hw">{dict.sentMode ? "整句解析" : dict.term}</span>
                 <Loader2 size={18} className="spin" />
                 <span className="mut">{dict.sentMode ? "拆句中…" : "查询中…"}</span>
               </div>
@@ -1806,7 +2433,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
 
             {dict.status === "error" && (
               <div className="dict-load">
-                <span className="hw serif">{dict.term}</span>
+                <span className="hw">{dict.term}</span>
                 <span className="mut">{dict.msg || "查询失败了。"}</span>
                 <button className="lnk" onClick={() =>
                   dict.trFail ? translateText(dict.trFail)
@@ -1852,7 +2479,8 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
             )}
           </div>
         </aside>
-      </main>
+        </main>
+      </div>
 
       {!dictOpen && (
         <button className={prefs.dictOff ? "dict-fab show" : "dict-fab"}
@@ -1903,49 +2531,123 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
 
 /* ---------- API Key 设置页 ---------- */
 
-function SetupView({ hasKey, keyDraft, setKeyDraft, modelDraft, setModelDraft, onSave, onClear, onBack }) {
+function SetupView({
+  hasKey, providerDraft, onPickProvider, keyDraft, setKeyDraft,
+  modelDraft, setModelDraft, showToast, onSave, onClear, onBack,
+}) {
+  const p = providerOf(providerDraft);
+  const [models, setModels] = useState([]);
+  const [listBusy, setListBusy] = useState(false);
+  const [filter, setFilter] = useState("");
+
+  // 换服务商后，上一家的模型列表就没意义了
+  useEffect(() => { setModels([]); setFilter(""); }, [providerDraft]);
+
+  async function loadModels() {
+    const k = keyDraft.trim();
+    if (!k) { showToast("请先粘贴 API Key"); return; }
+    setListBusy(true);
+    try {
+      const list = await fetchModels(k, providerDraft);
+      setModels(list);
+      showToast(list.length ? `找到 ${list.length} 个可用模型` : "没有拿到模型列表");
+    } catch (e) {
+      showToast(errText(e, providerDraft));
+    } finally {
+      setListBusy(false);
+    }
+  }
+
+  const shown = filter.trim()
+    ? models.filter((m) => m.toLowerCase().includes(filter.trim().toLowerCase()))
+    : models;
+
   return (
     <div className="setup">
       <div className="setup-card">
-        <div className="setup-head"><KeyRound size={20} /> 连接 OpenRouter</div>
+        <div className="setup-head"><KeyRound size={20} /> 连接模型服务</div>
         <p className="setup-sub">
-          本地版直接调用 OpenRouter 接口，一把密钥可以切换几十家模型。只需设置一次，之后打开就能直接用。
+          先选一家模型服务商，填上它的 API Key 就能用。密钥只存在这台电脑的浏览器里，
+          不会发到你选的这家服务商以外的任何地方。每家的密钥分开保存，随时可以切换。
         </p>
-        <ol className="setup-steps">
-          <li>打开 <b>openrouter.ai</b>，注册或登录</li>
-          <li>进入 <b>Keys</b> 页 → <b>Create Key</b>，复制以 <code>sk-or-</code> 开头的密钥</li>
-          <li>先充值几美元（或用免费模型试跑），按用量计费</li>
-          <li>把密钥粘贴到下面：</li>
-        </ol>
+
+        <p className="setup-l">选择服务商</p>
+        <div className="prov-grid">
+          {PROVIDER_IDS.map((id) => (
+            <button
+              key={id}
+              className={id === providerDraft ? "prov-chip on" : "prov-chip"}
+              onClick={() => onPickProvider(id)}
+            >
+              {PROVIDERS[id].name}
+              {!PROVIDERS[id].proxy && <span className="prov-tag">免代理</span>}
+            </button>
+          ))}
+        </div>
+        <p className="setup-note" style={{ marginTop: 12 }}>{p.blurb}</p>
+
+        <p className="setup-l">
+          API Key（去 <b>{p.site}</b> 注册后创建，格式类似 <code>{p.keyHint}</code>）
+        </p>
         <div className="setup-row">
           <input
             className="setup-in"
             type="password"
             value={keyDraft}
             onChange={(e) => setKeyDraft(e.target.value)}
-            placeholder="sk-or-..."
+            placeholder={p.keyHint}
             aria-label="API Key"
           />
         </div>
-        <p className="setup-l">模型（可选，留空用默认）</p>
+
+        <p className="setup-l">模型（留空则用默认的 {p.defaultModel}）</p>
         <div className="setup-row">
           <input
             className="setup-in mono"
             value={modelDraft}
             onChange={(e) => setModelDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") onSave(); }}
-            placeholder={DEFAULT_MODEL}
+            placeholder={p.defaultModel}
           />
+          {p.modelsUrl && (
+            <button className="btn-gh" onClick={loadModels} disabled={listBusy}>
+              {listBusy ? "获取中…" : "获取可用模型"}
+            </button>
+          )}
           <button className="btn-pri" onClick={onSave}>保存并开始</button>
         </div>
+
+        {models.length > 0 && (
+          <div className="model-box">
+            <input
+              className="setup-in"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="输入关键词筛选，比如 deepseek"
+              aria-label="筛选模型"
+            />
+            <div className="model-list">
+              {shown.slice(0, 300).map((m) => (
+                <button
+                  key={m}
+                  className={m === modelDraft ? "model-item on" : "model-item"}
+                  onClick={() => setModelDraft(m)}
+                >{m}</button>
+              ))}
+              {shown.length === 0 && <p className="setup-note">没有匹配的模型名。</p>}
+            </div>
+          </div>
+        )}
+
         <p className="setup-note">
-          填任意 OpenRouter 支持的模型名都行，比如 <code>openai/gpt-5.2</code>、<code>google/gemini-2.5-pro</code>，或更省钱的模型。
-          密钥只保存在这台电脑的浏览器里，不会传到 OpenRouter 以外的任何地方。国内使用需要先开启代理。
+          不确定填哪个模型时，先填好 Key 点「获取可用模型」，列表是从服务商那里实时取的，
+          点一下就能选中。{p.proxy ? "这家服务商在国内需要先开启代理。" : "这家服务商国内可以直接连，不用代理。"}
         </p>
+
         {hasKey && (
           <div className="setup-acts">
             <button className="btn-gh" onClick={onBack}>返回</button>
-            <button className="btn-gh danger-t" onClick={onClear}>清除已保存的密钥</button>
+            <button className="btn-gh danger-t" onClick={onClear}>清除这家的密钥</button>
           </div>
         )}
       </div>
@@ -1954,27 +2656,6 @@ function SetupView({ hasKey, keyDraft, setKeyDraft, modelDraft, setModelDraft, o
 }
 
 /* ---------- 标签页栏 ---------- */
-
-function TabBar({ tabs, activeId, onSwitch, onClose, onNew }) {
-  return (
-    <div className="tabbar">
-      {tabs.map((t) => (
-        <div key={t.id} className={t.id === activeId ? "tabchip on" : "tabchip"}>
-          <button className="tabchip-btn" onClick={() => onSwitch(t.id)} title={t.title}>
-            {t.imported && <FileUp size={11} />}
-            {(t.title || "未命名").length > 12 ? t.title.slice(0, 12) + "…" : (t.title || "未命名")}
-          </button>
-          <button className="tabchip-x" onClick={() => onClose(t.id)} aria-label={`关闭「${t.title}」`}>
-            <X size={11} />
-          </button>
-        </div>
-      ))}
-      <button className="tabchip-add" onClick={onNew} aria-label="新开标签页" title="新开一页">
-        <Plus size={14} />
-      </button>
-    </div>
-  );
-}
 
 /* ---------- 文章正文（分句 + 可点击单词 + 跟读高亮） ---------- */
 
@@ -2041,7 +2722,7 @@ function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave }) {
       {meta?.saved && (
         <div className="meetb"><Brain size={12} /> 你的生词 · 第 {meta.meet} 次见面</div>
       )}
-      <div className="hw serif">{d.word}</div>
+      <div className="hw">{d.word}</div>
       <div className="phon-row">
         {d.phonetic_us && (
           <button className="phon" onClick={() => onSpeak(d.word, "en-US")}>
@@ -2390,7 +3071,7 @@ function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onExit, onRead }) {
       <div className="rvw">
         <div className="rvw-done">
           <div className="rvw-emoji">🎉</div>
-          <h2 className="serif">今日复习完成！</h2>
+          <h2>今日复习完成！</h2>
           <p className="mut">记住了 {rev.ok} 个 · 还不熟 {rev.ng} 个{rev.ng > 0 ? "（它们很快会再来见你）" : ""}</p>
           <div className="rvw-acts">
             <button className="btn-soft" onClick={onExit}><BookOpen size={15} /> 返回生词本</button>
@@ -2426,7 +3107,7 @@ function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onExit, onRead }) {
 
       <div className="flipcard">
         <div className="fc-front">
-          <div className="fc-word serif">{en ? d.word : d.input}</div>
+          <div className="fc-word">{en ? d.word : d.input}</div>
           {en && (
             <button className="phon" onClick={() => onSpeak(d.word, "en-US")}>
               {d.phonetic_us || ""} <Volume2 size={13} />
@@ -2634,7 +3315,7 @@ function VocabView({ vocab, dueCount, onStartReview, onSpeak, onRemove, onCopy, 
                 {d.type === "en" ? (
                   <>
                     <div className="vb-word">
-                      <button className="vb-w serif" onClick={() => onLookup(d.word)}>{d.word}</button>
+                      <button className="vb-w" onClick={() => onLookup(d.word)}>{d.word}</button>
                       {d.phonetic_us && <span className="tr-ph">{d.phonetic_us}</span>}
                       <button className="ex-sp" onClick={() => onSpeak(d.word, "en-US")} aria-label="发音">
                         <Volume2 size={12} />
@@ -2681,6 +3362,163 @@ function VocabView({ vocab, dueCount, onStartReview, onSpeak, onRemove, onCopy, 
   );
 }
 
+/* ---------- 设置页 ----------
+   原来这些挤在一个 284px 的浮层里，还挡着正文。
+   拆成分组的整页，每组一句说明——设置项的意义比设置项本身重要。 */
+
+function SettingsView({
+  prefs, setPrefs, enVoices, onTestVoice,
+  providerName, model, onChangeProvider,
+  vocabCount, onCopyVocab, onDownloadVocab,
+  confirmClear, setConfirmClear, onClearVocab,
+}) {
+  /* 必须用函数式更新读 p.size：从渲染闭包里读 prefs.size 的话，
+     连点两次「A＋」时第二次拿到的还是旧值，只会加一档。 */
+  const bumpSize = (d) => setPrefs((p) => {
+    const i = FONT_SIZES.indexOf(p.size);
+    return { ...p, size: FONT_SIZES[Math.min(FONT_SIZES.length - 1, Math.max(0, i + d))] };
+  });
+  return (
+    <div className="setpage">
+      <h2 className="vb-t"><Settings size={19} /> 设置</h2>
+
+      <section className="setgrp">
+        <h3>外观</h3>
+        <p className="setgrp-h">只影响这台电脑上的显示，不会动到你的生词和文章。</p>
+
+        <div className="setrow">
+          <span className="setl">背景</span>
+          <div className="swrow">
+            {Object.entries(THEMES).map(([id, t]) => (
+              <button key={id}
+                className={prefs.theme === id ? "sw on" : "sw"}
+                style={{ background: t.swatch }}
+                title={t.name}
+                aria-label={t.name}
+                onClick={() => setPrefs((p) => ({ ...p, theme: id }))}
+              >{prefs.theme === id ? "✓" : ""}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="setrow">
+          <span className="setl">正文字体</span>
+          <div className="chipswitch">
+            <button className={prefs.font === "serif" ? "cs on" : "cs"}
+              onClick={() => setPrefs((p) => ({ ...p, font: "serif" }))}
+              style={{ fontFamily: "var(--serif)" }}>衬线 Aa</button>
+            <button className={prefs.font === "sans" ? "cs on" : "cs"}
+              onClick={() => setPrefs((p) => ({ ...p, font: "sans" }))}>黑体 Aa</button>
+          </div>
+        </div>
+
+        <div className="setrow">
+          <span className="setl">正文字号</span>
+          <div className="sizerow">
+            <button className="szbtn" aria-label="调小"
+              onClick={() => bumpSize(-1)}>A−</button>
+            <span className="szval">{prefs.size}</span>
+            <button className="szbtn" aria-label="调大"
+              onClick={() => bumpSize(1)}>A＋</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="setgrp">
+        <h3>朗读</h3>
+        <p className="setgrp-h">
+          用的是设备自带的语音合成，不消耗 API 额度。音质取决于系统——苹果设备和 Windows 上的 Edge 最好。
+        </p>
+
+        <div className="setrow">
+          <span className="setl">语速</span>
+          <div className="chipswitch">
+            {[[0.75, "慢"], [0.9, "稍慢"], [1, "正常"], [1.15, "快"]].map(([val, lb]) => (
+              <button key={lb}
+                className={Math.abs((prefs.rate || 1) - val) < 0.01 ? "cs on" : "cs"}
+                onClick={() => setPrefs((p) => ({ ...p, rate: val }))}
+              >{lb}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="setrow">
+          <span className="setl">声音</span>
+          <div className="setctl">
+            <select
+              className="vsel"
+              value={prefs.voiceURI || ""}
+              onChange={(e) => setPrefs((p) => ({ ...p, voiceURI: e.target.value }))}
+            >
+              <option value="">自动（已挑选设备里最佳）</option>
+              {enVoices.slice(0, 12).map((v) => (
+                <option key={v.voiceURI} value={v.voiceURI}>{v.name} · {v.lang}</option>
+              ))}
+            </select>
+            <button className="btn-gh" onClick={onTestVoice}><Volume2 size={14} /> 试听</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="setgrp">
+        <h3>模型服务</h3>
+        <p className="setgrp-h">
+          API Key 只存在这台电脑的浏览器里，只发给你选的这一家。每家的 Key 分开保存，切换不用重填。
+        </p>
+        <div className="setrow">
+          <span className="setl">当前</span>
+          <div className="setctl">
+            <span className="provnow">{providerName} · <code>{model}</code></span>
+            <button className="btn-gh" onClick={onChangeProvider}>
+              <KeyRound size={14} /> 更换服务商 / 模型
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="setgrp">
+        <h3>数据</h3>
+        <p className="setgrp-h">
+          全部数据只存在本浏览器里。<b>清除浏览器数据会一并清掉生词本</b>——导出的 Markdown
+          既是备份，也能在生词本页反向导入，这是唯一的搬家通道。
+        </p>
+        <div className="setrow">
+          <span className="setl">生词本</span>
+          <div className="setctl">
+            <span className="provnow">共 {vocabCount} 个词</span>
+            <button className="btn-gh" onClick={onCopyVocab} disabled={!vocabCount}>
+              <Copy size={14} /> 复制为 Markdown
+            </button>
+            <button className="btn-gh" onClick={onDownloadVocab} disabled={!vocabCount}>
+              <Download size={14} /> 下载 .md
+            </button>
+          </div>
+        </div>
+        <div className="setrow">
+          <span className="setl">危险操作</span>
+          <div className="setctl">
+            {confirmClear ? (
+              <>
+                <span className="setwarn">清空后无法恢复，确定？</span>
+                <button className="btn-danger" onClick={onClearVocab}>确认清空</button>
+                <button className="btn-gh" onClick={() => setConfirmClear(false)}>取消</button>
+              </>
+            ) : (
+              <button className="btn-gh danger-t" onClick={() => setConfirmClear(true)} disabled={!vocabCount}>
+                <Trash2 size={14} /> 清空生词本
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <button className="setreset"
+        onClick={() => setPrefs({ theme: "paper", font: "serif", size: 19, voiceURI: "", rate: 1, dictOff: false })}
+      >恢复默认外观</button>
+    </div>
+  );
+}
+
 /* ---------- 骨架屏 ---------- */
 
 function Skeleton({ topic }) {
@@ -2703,19 +3541,22 @@ function Skeleton({ topic }) {
 
 const CSS = `
 :root{
-  --paper:#FCFBF7; --card:#FFFFFF; --ink:#1C2B45; --ink2:#44546E; --mut:#8B94A6;
-  --line:#E7E5DC; --line2:#EFEDE5;
-  --blue:#2F5AA8; --blue-d:#24477F; --blue-bg:#EDF2FA;
-  --hi:#FFE873; --hi-hot:#FFDF54; --hi-soft:#FFF4BE; --hi-wash:#FFFAE0; --hi-text:#7A6200;
-  --ok:#2E7D5B; --ok-bg:#E8F4EE; --bad:#B5432F; --bad-bg:#FBEFEC;
-  --top:rgba(252,251,247,.94); --sk:#F7F5EE;
+  --paper:#F5F6F8; --card:#FFFFFF; --ink:#111826; --ink2:#4B5565; --mut:#98A2B3;
+  --line:#E3E6EC; --line2:#F0F2F5;
+  --blue:#4055C6; --blue-d:#33449E; --blue-bg:#EEF1FD;
+  --hi:#F5B944; --hi-hot:#F0A81E; --hi-soft:#FEF3D6; --hi-wash:#FEF8E8; --hi-text:#7A5200;
+  --ok:#12855F; --ok-bg:#E7F5EF; --bad:#C4342B; --bad-bg:#FDECEA;
+  --top:rgba(245,246,248,.88); --sk:#EDEFF3;
+  --sh:0 1px 2px rgba(17,24,38,.04); --sh-l:0 4px 16px rgba(64,85,198,.10);
+  --sbw:216px;
   --read-size:19px; --read-font:Georgia,'Iowan Old Style','Times New Roman','Songti SC',STSong,serif;
   --serif:Georgia,'Iowan Old Style','Times New Roman','Songti SC',STSong,serif;
   --sans:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 .app{min-height:100vh;background:var(--paper);color:var(--ink);font-family:var(--sans);
-  -webkit-font-smoothing:antialiased}
+  -webkit-font-smoothing:antialiased;display:grid;grid-template-columns:var(--sbw) minmax(0,1fr)}
+.app.solo{display:block}
 button{font-family:var(--sans);cursor:pointer;background:none;border:none;color:inherit}
 button:disabled{opacity:.55;cursor:default}
 :focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
@@ -2724,105 +3565,211 @@ button:disabled{opacity:.55;cursor:default}
 .spin{animation:sp 1s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 
-/* ---- 顶栏 ---- */
-.top{position:sticky;top:0;z-index:40;background:var(--top);backdrop-filter:blur(8px)}
-.top-in{max-width:1120px;margin:0 auto;padding:16px 24px;display:flex;align-items:center;gap:22px}
-.brand2{font-family:var(--serif);font-weight:700;font-size:15px;letter-spacing:3px;color:var(--ink)}
-.nav2{display:flex;gap:20px;margin:0 auto}
-.nl{font-size:13.5px;color:var(--mut);padding:3px 1px;letter-spacing:.5px;display:inline-flex;align-items:center;gap:5px;
-  border-bottom:2px solid transparent}
-.nl:hover{color:var(--ink)}
-.nl.on{color:var(--ink);font-weight:600;border-bottom-color:var(--hi-hot)}
-.nbadge{background:var(--hi);color:#1C2B45;border-radius:99px;font-size:10.5px;font-weight:700;
-  padding:1px 6px;line-height:1.5}
+/* ---- 左侧栏 ---- */
+.sidebar{background:var(--card);border-right:1px solid var(--line);padding:18px 12px;
+  display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;z-index:60}
+.brand2{display:flex;align-items:center;gap:9px;padding:6px 9px 18px;font-size:15px;
+  font-weight:800;letter-spacing:.5px;color:var(--ink)}
+.brand2 .logo{width:30px;height:30px;border-radius:9px;background:var(--blue);color:#fff;
+  display:grid;place-items:center;font-size:11.5px;font-weight:800;letter-spacing:-.5px;flex:none}
+.snav{display:flex;flex-direction:column;gap:3px}
+.sl{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;font-size:14px;
+  color:var(--ink2);text-align:left;width:100%}
+.sl:hover{background:var(--line2);color:var(--ink)}
+.sl.on{background:var(--blue-bg);color:var(--blue);font-weight:700}
+.sl svg{flex:none}
+.sbadge{margin-left:auto;background:var(--line2);color:var(--ink2);font-size:11px;font-weight:700;
+  border-radius:99px;padding:1px 7px}
+.sl.on .sbadge{background:var(--blue);color:#fff}
+.sbadge.hot{background:var(--hi);color:#4A3200}
+.sdiv{height:1px;background:var(--line);margin:12px 4px}
+.slbl{display:flex;align-items:center;font-size:11px;letter-spacing:1.5px;color:var(--mut);
+  font-weight:700;padding:2px 6px 6px 10px}
+.sadd{margin-left:auto;display:inline-flex;color:var(--mut);padding:4px;border-radius:6px}
+.sadd:hover{background:var(--line2);color:var(--blue)}
+.stabs{display:flex;flex-direction:column;gap:2px;overflow:auto;min-height:0}
+.sempty{font-size:12.5px;color:var(--mut);padding:2px 10px}
+.st{display:flex;align-items:center;border-radius:8px}
+.st:hover{background:var(--line2)}
+.st.on{background:var(--blue-bg)}
+.st-b{flex:1;min-width:0;display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--ink2);
+  padding:8px 4px 8px 10px;text-align:left;white-space:nowrap;overflow:hidden}
+.st-tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.st.on .st-b{color:var(--blue);font-weight:600}
+.st-b svg{flex:none}
+.st-ch{flex:none;font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums}
+.st-x{color:var(--mut);padding:5px 8px 5px 4px;border-radius:6px;opacity:0}
+.st:hover .st-x,.st.on .st-x{opacity:1}
+.st-x:hover{color:var(--bad)}
+.sfoot{margin-top:auto;background:var(--line2);border-radius:10px;padding:11px 12px}
+.sfoot b{display:flex;align-items:center;gap:6px;font-size:12.5px}
+.sfoot b svg{color:var(--hi-hot)}
+.sfoot span{display:block;font-size:11.5px;color:var(--mut);margin-top:3px}
+.sbmask{display:none}
+
+/* ---- 细顶条 ---- */
+.mainwrap{min-width:0}
+.topbar{position:sticky;top:0;z-index:40;background:var(--top);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);height:58px;padding:0 26px;display:flex;align-items:center;gap:12px}
+.menubtn{display:none;color:var(--ink2);padding:8px;border-radius:8px}
+.menubtn:hover{background:var(--line2)}
+.tsearch{flex:1;max-width:420px;display:flex;align-items:center;gap:8px;background:var(--card);
+  border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--mut)}
+.tsearch:focus-within{border-color:var(--blue)}
+.tsearch input{border:none;outline:none;background:none;flex:1;min-width:0;font-size:13.5px;
+  color:var(--ink);font-family:var(--sans)}
 
 /* ---- 布局 ---- */
-.layout{max-width:1120px;margin:0 auto;padding:26px 20px 120px;display:grid;
-  grid-template-columns:minmax(0,1fr) 340px;gap:30px;align-items:start}
+.layout{max-width:1180px;padding:26px 26px 110px;display:grid;
+  grid-template-columns:minmax(0,1fr) 330px;gap:22px;align-items:start}
 .mainc{min-width:0}
 
-/* ---- 空状态 / 生成器 ---- */
-.hero{padding:52px 0 20px;max-width:640px}
-.eyebrow{display:flex;align-items:center;gap:6px;font-size:12px;letter-spacing:4px;color:var(--mut)}
-.eyebrow svg{color:#E0862B}
-.hero-t{font-family:var(--serif);font-size:clamp(36px,5.2vw,58px);font-weight:700;letter-spacing:2px;
-  line-height:1.28;margin-top:16px}
-.mk{background:linear-gradient(100deg,var(--hi) 8%,var(--hi-soft) 96%);border-radius:6px;padding:0 6px;color:#1C2B45}
-.genrow{display:flex;gap:14px;margin-top:34px;flex-wrap:wrap;align-items:flex-end}
-.topic-in{flex:1;min-width:240px;font-size:17px;padding:10px 2px;border:none;
-  border-bottom:2px solid var(--line);border-radius:0;background:none;color:var(--ink);
-  outline:none;font-family:var(--sans)}
-.topic-in:focus{border-bottom-color:var(--ink)}
-.btn-pri{display:inline-flex;align-items:center;gap:7px;background:var(--ink);color:var(--paper);
-  font-size:14.5px;font-weight:600;padding:12px 24px;border-radius:99px}
-.btn-pri:hover{opacity:.88}
-.btn-pri.small{font-size:13px;padding:8px 16px}
-.lvline{display:flex;align-items:center;gap:16px;margin-top:30px;flex-wrap:wrap}
-.lvt{font-size:14px;color:var(--mut);padding:3px 1px;border-bottom:2px solid transparent}
-.lvt:hover{color:var(--ink)}
-.lvt.on{color:var(--ink);font-weight:700;border-bottom-color:var(--hi-hot)}
-.lv-tag{font-size:12px;color:var(--mut)}
-.chips-l{font-size:13px;color:var(--mut)}
-.lnk-imp{display:inline-flex;align-items:center;gap:6px;margin-top:14px;font-size:13.5px;
-  color:var(--ink2);padding:5px 2px;border-radius:6px}
-.lnk-imp:hover{color:var(--blue)}
+/* ---- 首页工作台 ---- */
+.home{padding-top:4px}
+.home-t{font-size:28px;font-weight:800;letter-spacing:-.3px}
+.home-sub{color:var(--ink2);font-size:14.5px;margin-top:7px}
+.genbox{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px;
+  margin-top:20px;box-shadow:var(--sh)}
+.genrow{display:flex;gap:10px;flex-wrap:wrap}
+.topic-in{flex:1;min-width:220px;font-size:15px;padding:12px 15px;border:1px solid var(--line);
+  border-radius:10px;background:var(--paper);color:var(--ink);outline:none;font-family:var(--sans)}
+.topic-in:focus{border-color:var(--blue);background:var(--card)}
+.btn-pri{display:inline-flex;align-items:center;gap:7px;background:var(--blue);color:#fff;
+  font-size:14.5px;font-weight:700;padding:12px 24px;border-radius:10px}
+.btn-pri:hover{background:var(--blue-d)}
+.btn-pri.small{font-size:13px;padding:9px 16px}
+.genfoot{display:flex;align-items:center;gap:7px;margin-top:15px;flex-wrap:wrap}
+.lvt{font-size:13px;padding:6px 13px;border-radius:8px;border:1px solid var(--line);
+  background:var(--paper);color:var(--ink2)}
+.lvt:hover{border-color:var(--mut);color:var(--ink)}
+.lvt.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:700}
+.lv-tag{font-size:12px;color:var(--mut);margin-left:2px}
+.chips-l{font-size:12.5px;color:var(--mut);font-weight:600}
+.genalt{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:13px;
+  padding-top:13px;border-top:1px solid var(--line2)}
+.genalt-t{font-size:12.5px;color:var(--ink2)}
+.genalt-h{font-size:12px;color:var(--mut)}
+.genwarn{margin-top:12px;background:var(--hi-wash);border:1px solid var(--hi-soft);
+  border-radius:10px;padding:10px 13px;font-size:12.5px;color:var(--hi-text);line-height:1.7}
+.genwarn b{font-weight:700}
+.lnk-imp{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:13px;
+  font-weight:600;color:var(--blue);padding:5px 4px;border-radius:6px}
+.lnk-imp:hover{color:var(--blue-d)}
 .lnk-imp .flip{transform:rotate(180deg)}
 .lnk-imp svg{transition:transform .18s}
 .chipswitch{display:flex;background:var(--line2);border-radius:9px;padding:3px}
 .cs{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;padding:5px 12px;border-radius:7px;color:var(--ink2)}
-.cs.on{background:var(--card);color:var(--ink);font-weight:600;box-shadow:0 1px 3px rgba(28,43,69,.10)}
-.chips{display:flex;align-items:center;gap:8px;margin-top:16px;flex-wrap:wrap}
-.chip{font-size:13px;padding:4px 6px;border-radius:6px;border:none;
-  background:none;color:var(--ink2)}
-.chip:hover{background:linear-gradient(100deg,var(--hi) 4%,var(--hi-soft) 96%);color:#1C2B45}
-.chip.dice{display:inline-flex;align-items:center;gap:5px;color:var(--mut)}
-.err{margin-top:20px;background:var(--bad-bg);border:1px solid transparent;color:var(--bad);
+.cs.on{background:var(--card);color:var(--ink);font-weight:600;box-shadow:var(--sh)}
+
+/* 数据条 */
+.statrow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:22px}
+.stt{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 15px;
+  text-align:left;box-shadow:var(--sh)}
+.stt b{font-size:23px;font-weight:800;display:block;letter-spacing:-.5px}
+.stpill{float:right;font-size:11px;font-weight:700;background:var(--ok-bg);color:var(--ok);
+  border-radius:99px;padding:2px 8px;margin-top:3px}
+.stt span{font-size:12.5px;color:var(--mut);display:block;margin-top:2px}
+.stt.go{cursor:pointer}
+.stt.go b{color:var(--blue)}
+.stt.go:hover{border-color:var(--blue);box-shadow:var(--sh-l)}
+
+/* 分区标题 + 卡片网格 */
+.sechead{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin:30px 0 13px;flex-wrap:wrap}
+.sechead h2{font-size:16px;font-weight:800}
+.sechead-r{display:flex;align-items:center;gap:8px}
+.cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:13px}
+.ccard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;
+  text-align:left;box-shadow:var(--sh);transition:border-color .15s,box-shadow .15s}
+.ccard:hover{border-color:var(--blue);box-shadow:var(--sh-l)}
+.ccard .ctag{font-size:11px;font-weight:700;color:var(--blue);background:var(--blue-bg);
+  border-radius:6px;padding:2px 8px;display:inline-block;margin-bottom:9px}
+.ccard b{display:block;font-size:14.5px;font-weight:700;line-height:1.45}
+.ccard p{font-size:12.5px;color:var(--mut);margin-top:6px;line-height:1.6;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ccard .ctag.real{background:var(--ok-bg);color:var(--ok)}
+.ccard .cprog{height:4px;background:var(--line2);border-radius:99px;margin-top:12px;overflow:hidden}
+.ccard .cprog i{display:block;height:100%;background:var(--blue);border-radius:99px}
+.ccard .cmeta{font-size:11.5px;color:var(--mut);margin-top:6px}
+.cardgrid.tight .ccard{padding:14px 15px}
+
+.err{margin-top:16px;background:var(--bad-bg);color:var(--bad);
   border-radius:10px;padding:11px 14px;font-size:14px}
 .lnk{color:var(--blue);text-decoration:underline;font-size:inherit}
 
 /* ---- 文章 ---- */
-.art-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:22px}
+.article{background:var(--card);border:1px solid var(--line);border-radius:15px;
+  padding:30px 38px 34px;box-shadow:var(--sh)}
+.art-bar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:22px}
 .btn-gh{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2);
-  border:none;background:none;border-radius:8px;padding:7px 9px}
-.btn-gh:hover{color:var(--ink);background:var(--line2)}
-.btn-soft{display:inline-flex;align-items:center;gap:7px;font-size:14px;font-weight:600;color:var(--ink);
-  border:none;background:var(--line2);border-radius:99px;padding:10px 18px}
-.btn-soft:hover{background:var(--hi-soft);color:#1C2B45}
-.btn-soft.small{font-size:13px;padding:7px 12px;margin-left:10px}
+  border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 12px}
+.btn-gh:hover{color:var(--ink);border-color:var(--mut)}
+.btn-gh.pri{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
+.btn-gh.pri:hover{background:var(--blue-d);border-color:var(--blue-d);color:#fff}
+.btn-soft{display:inline-flex;align-items:center;gap:7px;font-size:14px;font-weight:700;color:#fff;
+  border:none;background:var(--blue);border-radius:10px;padding:10px 18px}
+.btn-soft:hover{background:var(--blue-d)}
+.btn-soft.small{font-size:13px;padding:8px 14px;margin-left:10px}
 .lv-mini{display:flex;background:var(--line2);border-radius:9px;padding:3px}
 .lvm{font-size:12.5px;padding:5px 11px;border-radius:7px;color:var(--ink2)}
-.lvm.on{background:var(--ink);color:var(--paper);font-weight:600}
-.art-acts{display:flex;gap:8px;flex-wrap:wrap}
-.art-meta{font-size:12.5px;color:var(--mut);letter-spacing:.3px;margin-bottom:8px}
-.art-title{font-family:var(--serif);font-size:clamp(28px,3.8vw,42px);font-weight:700;line-height:1.3;letter-spacing:.5px}
-.art-intro{margin-top:12px;color:var(--ink2);font-size:14.5px;padding-left:12px;
-  border-left:4px solid var(--hi)}
+.lvm.on{background:var(--blue);color:#fff;font-weight:600}
+.art-acts{display:flex;gap:7px;flex-wrap:wrap}
+.art-meta{display:flex;align-items:center;flex-wrap:wrap;gap:5px;
+  font-size:12.5px;color:var(--mut);letter-spacing:.2px;margin-bottom:8px}
+.mtag{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;
+  color:var(--blue);background:var(--blue-bg);border-radius:6px;padding:3px 8px}
+.mtag.btn{cursor:pointer;border:none}
+.mtag.btn:hover{background:var(--blue);color:#fff}
+.mtag.real{background:var(--ok-bg);color:var(--ok)}
+.mtag.ai{background:var(--hi-wash);color:var(--hi-text)}
+.srclink{display:inline-flex;align-items:center;gap:4px;color:var(--blue);font-weight:600;
+  text-decoration:none;border-bottom:1px solid transparent}
+.srclink:hover{border-bottom-color:var(--blue)}
+.catrow{display:flex;flex-wrap:wrap;gap:7px;margin:-4px 0 14px}
+.cat{display:inline-flex;align-items:center;gap:5px;font-size:13px;padding:7px 14px;
+  border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--ink2)}
+.cat:hover{border-color:var(--mut);color:var(--ink)}
+.cat.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:700}
+.art-title{font-size:clamp(24px,3vw,32px);font-weight:800;line-height:1.35;letter-spacing:-.3px}
+.art-intro{margin-top:14px;color:var(--ink2);font-size:14px;line-height:1.7;
+  background:var(--blue-bg);border-radius:10px;padding:13px 16px}
+/* ---- 章节导航 ---- */
+.chbar{display:flex;align-items:center;gap:14px;margin-top:16px;padding:11px 14px;
+  background:var(--paper);border:1px solid var(--line);border-radius:11px}
+.chbar .btn-gh{flex:none;background:var(--card)}
+.chprog{flex:1;min-width:0}
+.chnum{display:block;font-size:12.5px;color:var(--ink2);font-weight:600;
+  text-align:center;margin-bottom:6px;font-variant-numeric:tabular-nums}
+.chtrack{height:4px;background:var(--line);border-radius:99px;overflow:hidden}
+.chtrack i{display:block;height:100%;background:var(--blue);border-radius:99px;transition:width .25s}
+
 .woven-note{margin-top:12px;display:inline-flex;align-items:center;gap:6px;font-size:12.5px;
-  color:var(--hi-text);background:var(--hi-wash);border:1px dashed var(--hi-hot);border-radius:9px;padding:6px 11px}
-.art-body{margin-top:22px}
-.art-body .pwrap{margin-bottom:1.15em;max-width:66ch}
+  color:var(--hi-text);background:var(--hi-wash);border:1px solid var(--hi-soft);border-radius:9px;padding:6px 11px}
+.art-body{margin-top:26px}
+.art-body .pwrap{margin-bottom:1.1em;max-width:64ch}
 .art-body p{font-family:var(--read-font);font-size:var(--read-size);line-height:1.95;
   letter-spacing:.15px;margin-bottom:0}
 .para-cn{font-family:var(--sans)!important;font-size:14px!important;line-height:1.75!important;
-  color:var(--ink2);margin-top:6px!important;padding:8px 12px;background:var(--hi-wash);
-  border-left:3px solid var(--hi);border-radius:0 8px 8px 0}
+  color:var(--ink2);margin-top:7px!important;padding:10px 14px;background:var(--paper);
+  border-radius:9px}
 .sen{border-radius:4px;transition:background .2s}
-.sen.on{background:linear-gradient(100deg,rgba(255,232,115,.55),rgba(255,244,190,.55));
+.sen.on{background:var(--hi-soft);
   box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .w{cursor:pointer;border-radius:4px;padding:0 1px;margin:0 -1px;transition:background .12s}
-.w:hover{background:linear-gradient(100deg,var(--hi) 4%,var(--hi-soft) 96%);color:#1C2B45}
-.w.act{background:var(--hi-hot);color:#1C2B45}
-.w.sav{background:var(--hi-wash);box-shadow:inset 0 -6px 0 var(--hi-soft)}
-.w.wov{background:var(--hi-soft);box-shadow:inset 0 -2px 0 var(--hi-hot)}
-.after-row{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
+.w:hover{background:var(--hi-soft)}
+.w.act{background:var(--hi);color:#3D2A00}
+.w.sav{box-shadow:inset 0 -7px 0 var(--hi-soft)}
+.w.wov{background:var(--hi-wash);box-shadow:inset 0 -2px 0 var(--hi)}
+.after-row{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap}
 
 /* ---- 小测 ---- */
-.quiz{margin-top:20px;background:var(--card);border:none;border-radius:16px;padding:20px}
+/* 小测和选题嵌在文章卡片里，所以用「凹进去」的底色，不要再叠一层卡片 */
+.quiz{margin-top:20px;background:var(--paper);border:1px solid var(--line);border-radius:13px;padding:20px}
 .quiz-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700}
 .quiz-q{margin-top:12px;font-size:15.5px;line-height:1.7}
 .qopts{display:flex;flex-direction:column;gap:8px;margin-top:12px}
 .qopt{display:flex;align-items:flex-start;gap:9px;text-align:left;font-size:14.5px;line-height:1.55;
-  border:1.5px solid var(--line);border-radius:10px;padding:10px 13px;background:var(--paper)}
+  border:1px solid var(--line);border-radius:10px;padding:10px 13px;background:var(--card)}
 .qopt:hover{border-color:var(--blue)}
 .qletter{flex:none;width:22px;height:22px;border-radius:7px;background:var(--line2);
   display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
@@ -2831,16 +3778,16 @@ button:disabled{opacity:.55;cursor:default}
 .qopt.wrong{border-color:var(--bad);background:var(--bad-bg)}
 .qopt.wrong .qletter{background:var(--bad);color:#fff}
 .qopt.dim{opacity:.55}
-.qexp{margin-top:12px;font-size:14px;line-height:1.7;background:var(--paper);border-radius:10px;
+.qexp{margin-top:12px;font-size:14px;line-height:1.7;background:var(--card);border-radius:10px;
   padding:11px 13px;display:flex;align-items:center;flex-wrap:wrap;gap:4px}
 .quiz-done{text-align:center;padding:8px 0 4px}
-.quiz-score{font-size:22px;font-weight:800;font-family:var(--serif)}
+.quiz-score{font-size:22px;font-weight:800;letter-spacing:-.3px}
 .quiz-adj{margin:12px 0 14px;font-size:14px;color:var(--ink2)}
 .quiz-adj.up{color:var(--ok);background:var(--ok-bg);border-radius:9px;padding:8px 12px;display:inline-block}
 .quiz-adj.down{color:var(--bad);background:var(--bad-bg);border-radius:9px;padding:8px 12px;display:inline-block}
 
 /* ---- 选题 ---- */
-.ideas{margin-top:20px;background:var(--card);border:none;border-radius:16px;padding:20px}
+.ideas{margin-top:20px;background:var(--paper);border:1px solid var(--line);border-radius:13px;padding:20px}
 .idea{position:relative;padding:11px 34px 11px 0;border-bottom:1px dashed var(--line2)}
 .idea:last-child{border-bottom:none}
 .idea-t{font-weight:700;font-size:15px}
@@ -2859,25 +3806,26 @@ button:disabled{opacity:.55;cursor:default}
 @keyframes sh{to{background-position:-200% 0}}
 
 /* ---- 词典面板 ---- */
-.dictwrap{position:sticky;top:78px}
-.dict{background:var(--card);border:none;border-radius:18px;padding:20px;
-  max-height:calc(100vh - 110px);overflow:auto;box-shadow:0 4px 22px rgba(28,43,69,.08)}
+.dictwrap{position:sticky;top:76px}
+.dict{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px;
+  max-height:calc(100vh - 100px);overflow:auto;box-shadow:var(--sh)}
 .dict-close{display:flex;position:absolute;top:10px;right:12px;color:var(--mut);
   background:var(--line2);border-radius:99px;padding:6px}
-.dsearch{display:flex;align-items:center;gap:8px;border-bottom:1.5px solid var(--line);
-  padding:2px 2px 9px;margin-bottom:14px;color:var(--mut)}
-.dsearch input{border:none;outline:none;background:none;flex:1;min-width:0;font-size:14px;color:var(--ink)}
-.dsearch:focus-within{border-bottom-color:var(--ink)}
+.dsearch{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;
+  padding:9px 12px;margin-bottom:18px;color:var(--mut);background:var(--paper)}
+.dsearch:focus-within{border-color:var(--blue)}
+.dsearch input{border:none;outline:none;background:none;flex:1;min-width:0;font-size:13.5px;
+  color:var(--ink);font-family:var(--sans)}
 .dict-fab{display:none;position:fixed;right:18px;bottom:86px;z-index:58;width:46px;height:46px;
-  border-radius:99px;background:var(--ink);color:var(--paper);align-items:center;justify-content:center;
-  box-shadow:0 8px 22px rgba(28,43,69,.3)}
+  border-radius:99px;background:var(--blue);color:#fff;align-items:center;justify-content:center;
+  box-shadow:0 8px 22px rgba(64,85,198,.35)}
 .dict-idle{text-align:center;padding:26px 8px;color:var(--ink2);font-size:14px}
 .dict-idle p{margin-top:10px}
-.dict-idle-mark{width:58px;height:36px;margin:0 auto;background:var(--hi);color:#1C2B45;
+.dict-idle-mark{width:58px;height:36px;margin:0 auto;background:var(--blue);color:#fff;
   font-family:var(--sans);font-weight:800;font-size:15px;letter-spacing:1.5px;border-radius:11px;
-  display:flex;align-items:center;justify-content:center;transform:rotate(-4deg)}
+  display:flex;align-items:center;justify-content:center}
 .dict-load{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:6px 2px}
-.hw{font-size:29px;font-weight:700;line-height:1.2;word-break:break-word}
+.hw{font-size:27px;font-weight:800;line-height:1.2;word-break:break-word;letter-spacing:-.3px}
 .meetb{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;color:var(--hi-text);
   background:var(--hi-wash);border:1px solid var(--hi-soft);border-radius:99px;padding:3px 10px;margin-bottom:8px}
 .phon-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
@@ -2892,13 +3840,14 @@ button:disabled{opacity:.55;cursor:default}
   padding:1px 6px;margin-right:7px}
 .sentbtn{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;
   color:var(--blue);border:1px dashed var(--blue);border-radius:9px;padding:6px 12px;background:var(--blue-bg)}
-.sentbtn:hover{background:#E2EBF8}
+.sentbtn:hover{background:var(--card)}
 .senses{list-style:none;margin-top:14px}
 .senses li{display:flex;gap:9px;padding:6px 0;font-size:14.5px;line-height:1.6;
   border-bottom:1px dashed var(--line2)}
 .senses li:last-child{border-bottom:none}
 .senses.tight li{padding:3px 0;font-size:13.5px;border:none}
-.pos{flex:none;font-family:var(--serif);color:var(--blue);font-size:13px;padding-top:2px}
+.pos{flex:none;color:var(--blue);font-size:12px;font-weight:700;background:var(--blue-bg);
+  border-radius:5px;padding:2px 7px;height:fit-content;margin-top:1px}
 .exs{margin-top:6px}
 .sec-l{font-size:11.5px;font-weight:700;color:var(--mut);letter-spacing:2px;margin:10px 0 4px}
 .ex{padding:8px 0;border-bottom:1px dashed var(--line2)}
@@ -2909,9 +3858,9 @@ button:disabled{opacity:.55;cursor:default}
 .ex-sp{color:var(--mut);padding:2px 4px;vertical-align:middle;margin-left:4px}
 .ex-sp:hover{color:var(--blue)}
 .btn-save{width:100%;margin-top:16px;display:flex;align-items:center;justify-content:center;gap:7px;
-  background:var(--ink);color:var(--paper);font-size:14px;font-weight:600;border-radius:10px;padding:11px}
-.btn-save:hover{opacity:.9}
-.btn-save.on{background:var(--hi-wash);color:var(--ink);border:1.5px solid var(--hi-hot)}
+  background:var(--blue);color:#fff;font-size:14px;font-weight:700;border-radius:10px;padding:11px}
+.btn-save:hover{background:var(--blue-d)}
+.btn-save.on{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue)}
 .trans{margin-top:14px}
 .tr{padding:9px 0;border-bottom:1px dashed var(--line2)}
 .tr:last-child{border:none}
@@ -2936,9 +3885,9 @@ button:disabled{opacity:.55;cursor:default}
 .rvw-top{display:flex;align-items:center;justify-content:space-between}
 .rvw-bar{height:5px;background:var(--line2);border-radius:99px;margin-top:10px;overflow:hidden}
 .rvw-bar i{display:block;height:100%;background:var(--hi-hot);border-radius:99px;transition:width .25s}
-.flipcard{margin-top:26px;background:var(--card);border:none;border-radius:20px;
-  padding:34px 26px;box-shadow:0 3px 16px rgba(28,43,69,.06);text-align:center}
-.fc-word{font-size:38px;font-weight:800;line-height:1.2;word-break:break-word}
+.flipcard{margin-top:26px;background:var(--card);border:1px solid var(--line);border-radius:16px;
+  padding:34px 26px;box-shadow:var(--sh);text-align:center}
+.fc-word{font-size:36px;font-weight:800;line-height:1.2;word-break:break-word;letter-spacing:-.5px}
 .fc-front .phon{margin-top:14px}
 .fc-flip{margin-top:26px;width:100%;font-size:14.5px;color:var(--ink2);border:1.5px dashed var(--line);
   border-radius:12px;padding:14px;background:var(--paper)}
@@ -2959,17 +3908,19 @@ button:disabled{opacity:.55;cursor:default}
 /* ---- 统计 ---- */
 .stats{padding-top:6px}
 .st-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:18px}
-.st-card{background:var(--card);border:none;border-radius:16px;padding:16px 14px;text-align:center}
+.st-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 14px;
+  text-align:center;box-shadow:var(--sh)}
 .st-card.go{cursor:pointer}
-.st-card.go:hover{box-shadow:0 3px 14px rgba(28,43,69,.10)}
+.st-card.go:hover{border-color:var(--blue);box-shadow:var(--sh-l)}
 .st-card.go .st-l{color:var(--blue);font-weight:700}
-.st-n{font-family:var(--serif);font-size:26px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--ink)}
+.st-n{font-size:25px;font-weight:800;letter-spacing:-.5px;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--ink)}
 .st-n svg{color:#E0862B}
 .st-l{display:block;margin-top:4px;font-size:12.5px;color:var(--mut)}
-.st-chart{margin-top:22px;background:var(--card);border:none;border-radius:16px;padding:18px}
+.st-chart{margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:18px;box-shadow:var(--sh)}
 .bars{display:flex;align-items:flex-end;gap:6px;height:100px;margin-top:10px}
 .barcol{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;justify-content:flex-end}
-.bar{width:100%;max-width:22px;background:var(--ink);border-radius:5px 5px 2px 2px}
+.bar{width:100%;max-width:22px;background:var(--blue);border-radius:5px 5px 2px 2px}
 .bar.today{background:var(--hi-hot)}
 .bar-l{font-size:10px;color:var(--mut);height:12px}
 .st-lv{margin-top:18px;font-size:13.5px;color:var(--ink2)}
@@ -2977,19 +3928,19 @@ button:disabled{opacity:.55;cursor:default}
 /* ---- 生词本 ---- */
 .vb-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
   margin:8px 0 20px}
-.vb-t{font-family:var(--serif);font-size:24px;display:flex;align-items:center;gap:9px}
-.vb-n{font-size:14px;background:var(--hi);color:#1C2B45;border-radius:99px;padding:2px 11px;font-family:var(--sans)}
+.vb-t{font-size:22px;font-weight:800;letter-spacing:-.3px;display:flex;align-items:center;gap:9px}
+.vb-n{font-size:13px;font-weight:700;background:var(--blue-bg);color:var(--blue);border-radius:99px;padding:2px 11px}
 .vb-acts{display:flex;gap:8px;flex-wrap:wrap}
 .btn-danger{font-size:13px;background:#B5432F;color:#fff;border-radius:9px;padding:7px 12px}
 .vb-empty{text-align:center;padding:70px 20px;color:var(--ink2);font-size:15px}
 .vb-empty p{margin-top:12px}
 .vb-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px}
-.vb-card{position:relative;background:var(--card);border:none;border-radius:16px;
-  padding:16px 16px 12px}
+.vb-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:16px 16px 12px;box-shadow:var(--sh)}
 .vb-x{position:absolute;top:10px;right:10px;color:var(--mut);padding:4px;border-radius:6px}
 .vb-x:hover{background:var(--line2);color:var(--ink)}
 .vb-word{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-right:24px}
-.vb-w{font-size:19px;font-weight:700;color:var(--ink)}
+.vb-w{font-size:18px;font-weight:800;letter-spacing:-.2px;color:var(--ink)}
 button.vb-w:hover{color:var(--blue)}
 .vb-ex{margin-top:8px;font-family:var(--serif);font-size:13px;color:var(--ink2);line-height:1.55}
 .vb-ex b{background:var(--hi-soft);border-radius:3px;padding:0 2px}
@@ -3001,50 +3952,61 @@ button.vb-w:hover{color:var(--blue)}
 
 /* ---- 跟读条 ---- */
 .shadowbar{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:55;
-  display:flex;align-items:center;gap:8px;background:#1C2B45;color:#fff;border-radius:99px;
-  padding:9px 12px 9px 18px;box-shadow:0 10px 30px rgba(28,43,69,.35);max-width:94vw;flex-wrap:wrap;justify-content:center}
+  display:flex;align-items:center;gap:8px;background:var(--ink);color:var(--card);border-radius:99px;
+  padding:9px 12px 9px 18px;box-shadow:0 10px 30px rgba(17,24,38,.35);max-width:94vw;flex-wrap:wrap;justify-content:center}
 .sb-idx{font-size:12.5px;color:#B9C4D8;font-variant-numeric:tabular-nums}
 .sb-hint{font-size:13px}
 .sb-btn{display:inline-flex;align-items:center;gap:4px;color:#fff;background:rgba(255,255,255,.14);
   border-radius:99px;padding:7px 10px;font-size:13px}
 .sb-btn:hover{background:rgba(255,255,255,.25)}
-.sb-btn.on{background:var(--hi);color:#1C2B45}
-.sb-btn.pri{background:var(--hi);color:#1C2B45;font-weight:700;padding:7px 14px}
+.sb-btn.on{background:var(--hi);color:#3D2A00}
+.sb-btn.pri{background:var(--hi);color:#3D2A00;font-weight:700;padding:7px 14px}
 .sb-btn.pri:hover{background:var(--hi-hot)}
 
 /* ---- toast ---- */
 .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);z-index:99;
   background:var(--ink);color:var(--paper);font-size:13.5px;border-radius:99px;padding:9px 20px;
-  box-shadow:0 6px 20px rgba(28,43,69,.25);animation:up .2s ease}
+  box-shadow:0 6px 20px rgba(17,24,38,.25);animation:up .2s ease}
 @keyframes up{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 
-/* ---- 外观设置 ---- */
-.prefwrap{position:relative}
-.gearbtn{display:inline-flex;color:var(--ink2);padding:10px;border-radius:99px;border:none;
-  background:var(--card);box-shadow:0 2px 10px rgba(28,43,69,.10)}
-.gearbtn:hover{color:var(--ink);box-shadow:0 3px 14px rgba(28,43,69,.16)}
-.pop{position:absolute;right:0;top:44px;z-index:70;width:284px;background:var(--card);
-  border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 12px 34px rgba(28,43,69,.16)}
-.pop-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0}
-.pop-l{font-size:12.5px;color:var(--mut)}
-.swrow{display:flex;gap:7px}
-.sw{width:26px;height:26px;border-radius:99px;border:2px solid var(--line);font-size:12px;
+/* ---- 设置页 ---- */
+.gearbtn{display:inline-flex;align-items:center;gap:7px;color:var(--ink2);padding:8px 13px;
+  border-radius:9px;border:1px solid var(--line);background:var(--card);font-size:13.5px;font-weight:600}
+.gearbtn:hover{color:var(--ink);border-color:var(--mut)}
+.gearbtn.on{background:var(--blue-bg);border-color:var(--blue);color:var(--blue)}
+.gearlbl{white-space:nowrap}
+.sl-set{margin-top:8px}
+.setpage{max-width:720px;padding-top:2px}
+.setgrp{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:20px 22px;margin-top:16px;box-shadow:var(--sh)}
+.setgrp h3{font-size:15px;font-weight:800}
+.setgrp-h{font-size:12.5px;color:var(--mut);line-height:1.75;margin-top:6px}
+.setgrp-h b{color:var(--ink2)}
+.setrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:13px 0;border-bottom:1px solid var(--line2)}
+.setrow:last-child{border-bottom:none;padding-bottom:0}
+.setgrp-h + .setrow{border-top:1px solid var(--line2);margin-top:14px}
+.setl{flex:none;width:78px;font-size:13.5px;color:var(--ink2);font-weight:600}
+.setctl{display:flex;align-items:center;gap:9px;flex-wrap:wrap;min-width:0}
+.provnow{font-size:13px;color:var(--ink2)}
+.provnow code{background:var(--line2);border-radius:5px;padding:2px 7px;font-size:12px}
+.setwarn{font-size:13px;color:var(--bad);font-weight:600}
+.swrow{display:flex;gap:8px}
+.sw{width:28px;height:28px;border-radius:99px;border:2px solid var(--line);font-size:12px;
   color:#1C2B45;display:inline-flex;align-items:center;justify-content:center}
 .sw.on{border-color:var(--blue)}
 .sw[title="夜间"]{color:#E8ECF5}
 .sizerow{display:flex;align-items:center;gap:8px}
-.szbtn{font-size:13px;font-weight:700;border:1px solid var(--line);border-radius:8px;padding:4px 9px;background:var(--paper)}
+.szbtn{font-size:13px;font-weight:700;border:1px solid var(--line);border-radius:8px;
+  padding:5px 11px;background:var(--paper)}
 .szbtn:hover{border-color:var(--blue);color:var(--blue)}
-.szval{font-size:13px;color:var(--ink2);min-width:20px;text-align:center;font-variant-numeric:tabular-nums}
-.pop-div{height:1px;background:var(--line2);margin:8px 0}
-.pop-col{flex-direction:column;align-items:stretch;gap:8px}
-.vsel{width:100%;font-size:13px;color:var(--ink);background:var(--paper);border:1.5px solid var(--line);
-  border-radius:9px;padding:8px 10px;outline:none;font-family:var(--sans)}
+.szval{font-size:13px;color:var(--ink2);min-width:22px;text-align:center;font-variant-numeric:tabular-nums}
+.vsel{min-width:220px;font-size:13px;color:var(--ink);background:var(--paper);
+  border:1px solid var(--line);border-radius:9px;padding:9px 10px;outline:none;font-family:var(--sans)}
 .vsel:focus{border-color:var(--blue)}
-.vtest{align-self:flex-start}
-.pop-hint{font-size:11.5px;color:var(--mut);line-height:1.6}
-.pop-reset{width:100%;margin-top:8px;font-size:12.5px;color:var(--mut);padding:6px;border-radius:8px}
-.pop-reset:hover{background:var(--line2);color:var(--ink)}
+.setreset{width:100%;margin-top:16px;font-size:13px;color:var(--mut);padding:11px;
+  border-radius:10px;border:1px solid var(--line);background:var(--card)}
+.setreset:hover{color:var(--ink);border-color:var(--mut)}
 
 /* ---- 导入材料 ---- */
 .imp-entry{display:flex;align-items:center;gap:10px;margin-top:24px;flex-wrap:wrap}
@@ -3066,8 +4028,8 @@ button.vb-w:hover{color:var(--blue)}
 .tr-src{font-size:15.5px;line-height:1.7}
 .tr-dst{font-size:15px;line-height:1.75;background:var(--hi-wash);border-radius:10px;padding:10px 12px}
 .seltip{position:fixed;z-index:80;transform:translateX(-50%);display:inline-flex;align-items:center;gap:5px;
-  background:#1C2B45;color:#fff;font-size:13px;font-weight:600;border-radius:99px;padding:7px 14px;
-  box-shadow:0 8px 22px rgba(28,43,69,.32)}
+  background:var(--ink);color:var(--card);font-size:13px;font-weight:600;border-radius:99px;padding:7px 14px;
+  box-shadow:0 8px 22px rgba(17,24,38,.32)}
 .seltip:hover{background:#2F5AA8}
 .wchat{margin-top:18px;border-top:1px dashed var(--line);padding-top:6px}
 .wc-chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 4px}
@@ -3082,7 +4044,7 @@ button.vb-w:hover{color:var(--blue)}
 .wcw i{font-family:var(--serif);font-style:normal;font-size:12px;color:var(--mut)}
 .wcw>span{color:var(--ink2)}
 .wcw-add{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;
-  width:24px;height:24px;border-radius:99px;background:var(--hi);color:#1C2B45}
+  width:24px;height:24px;border-radius:99px;background:var(--hi);color:#3D2A00}
 .wcw-add:hover{background:var(--hi-hot)}
 .wc-in{display:flex;align-items:center;gap:8px;margin-top:12px;border-bottom:1.5px solid var(--line);padding-bottom:6px}
 .wc-in:focus-within{border-bottom-color:var(--ink)}
@@ -3094,7 +4056,7 @@ button.vb-w:hover{color:var(--blue)}
 .popmask{position:fixed;inset:0;z-index:69}
 .lvsel{position:relative;display:inline-flex}
 .menu{position:absolute;left:0;top:calc(100% + 6px);z-index:70;min-width:196px;background:var(--card);
-  border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:0 12px 34px rgba(28,43,69,.16)}
+  border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:0 12px 34px rgba(17,24,38,.16)}
 .menu.menu-r{left:auto;right:0}
 .mi{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:13.5px;
   color:var(--ink);padding:9px 11px;border-radius:8px}
@@ -3110,37 +4072,39 @@ button.vb-w:hover{color:var(--blue)}
 .meta-btn:hover{color:var(--blue)}
 .meta-btn:disabled{opacity:.55}
 .dotsep{color:var(--mut)}
-.tabbar{display:flex;align-items:center;gap:3px;margin-bottom:22px;overflow-x:auto;padding-bottom:3px}
-.tabchip{display:flex;align-items:center;flex:none}
-.tabchip-btn{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--mut);
-  padding:7px 4px 7px 11px;border-radius:8px 0 0 8px;white-space:nowrap;max-width:160px;
-  overflow:hidden;text-overflow:ellipsis}
-.tabchip.on .tabchip-btn{color:var(--ink);font-weight:600;background:var(--line2)}
-.tabchip:hover .tabchip-btn{color:var(--ink)}
-.tabchip-x{color:var(--mut);padding:6px 9px 6px 3px;border-radius:0 8px 8px 0}
-.tabchip.on .tabchip-x{background:var(--line2)}
-.tabchip-x:hover{color:var(--bad)}
-.tabchip-add{flex:none;display:inline-flex;align-items:center;justify-content:center;
-  width:27px;height:27px;border-radius:99px;color:var(--mut);margin-left:5px}
-.tabchip-add:hover{background:var(--line2);color:var(--ink)}
-
 /* ---- API 设置页 ---- */
 .setup{max-width:600px;margin:0 auto;padding:64px 24px 100px}
-.setup-card{background:var(--card);border-radius:20px;padding:34px 30px;
-  box-shadow:0 4px 26px rgba(28,43,69,.08)}
-.setup-head{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-size:25px;font-weight:700}
+.setup-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:34px 30px;
+  box-shadow:var(--sh)}
+.setup-head{display:flex;align-items:center;gap:10px;font-size:24px;font-weight:800;letter-spacing:-.3px}
 .setup-sub{margin-top:12px;color:var(--ink2);font-size:14.5px;line-height:1.75}
 .setup-steps{margin:20px 0 0 20px;font-size:14.5px;line-height:2.15}
 .setup-steps code{background:var(--line2);border-radius:5px;padding:1px 6px;font-size:13px}
 .setup-l{margin-top:16px;font-size:12px;color:var(--mut)}
 .setup-row{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
-.setup-in{flex:1;min-width:200px;font-size:14px;padding:12px 14px;border:none;
-  border-bottom:2px solid var(--line);border-radius:0;background:none;color:var(--ink);outline:none}
+.setup-in{flex:1;min-width:200px;font-size:14px;padding:11px 14px;border:1px solid var(--line);
+  border-radius:10px;background:var(--paper);color:var(--ink);outline:none;font-family:var(--sans)}
 .setup-in.mono{font-family:ui-monospace,Menlo,Consolas,monospace}
-.setup-in:focus{border-bottom-color:var(--ink)}
+.setup-in:focus{border-color:var(--blue);background:var(--card)}
 .setup-note{margin-top:16px;font-size:12px;color:var(--mut);line-height:1.75}
 .setup-note code{background:var(--line2);border-radius:5px;padding:1px 5px}
 .setup-acts{display:flex;gap:10px;margin-top:20px}
+.prov-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.prov-chip{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;
+  padding:9px 13px;border-radius:11px;border:1.5px solid var(--line);
+  background:var(--card);color:var(--ink2);cursor:pointer;transition:.15s}
+.prov-chip:hover{border-color:var(--blue);color:var(--ink)}
+.prov-chip.on{border-color:var(--blue);background:var(--blue-bg);color:var(--blue-d);font-weight:600}
+.prov-tag{font-size:10.5px;padding:1px 5px;border-radius:5px;
+  background:var(--ok-bg);color:var(--ok);font-weight:600}
+.model-box{margin-top:12px;padding:12px;border-radius:12px;background:var(--sk)}
+.model-list{display:flex;flex-direction:column;gap:3px;max-height:230px;
+  overflow-y:auto;margin-top:10px}
+.model-item{text-align:left;font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:12.5px;padding:7px 10px;border-radius:8px;border:none;
+  background:transparent;color:var(--ink2);cursor:pointer}
+.model-item:hover{background:var(--card);color:var(--ink)}
+.model-item.on{background:var(--blue-bg);color:var(--blue-d);font-weight:600}
 .danger-t{color:var(--bad)}
 .danger-t:hover{background:var(--bad-bg)}
 
@@ -3152,21 +4116,37 @@ button.vb-w:hover{color:var(--blue)}
   .dict-fab.show{display:flex}
 }
 
+/* ---- 窄屏：侧栏变成抽屉 ----
+   1000px 以下先收侧栏（比词典的 880px 早一档），
+   免得中等宽度的窗口被侧栏+词典挤得正文只剩一条缝。 */
+@media (max-width:1000px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .sidebar{position:fixed;left:0;top:0;width:252px;
+    transform:translateX(-102%);transition:transform .24s ease;
+    box-shadow:0 0 40px rgba(17,24,38,.2)}
+  .sidebar.open{transform:none}
+  .sbmask{display:block;position:fixed;inset:0;z-index:55;background:rgba(17,24,38,.4)}
+  .menubtn{display:inline-flex}
+  .statrow{grid-template-columns:repeat(2,1fr)}
+}
+
 /* ---- 移动端 ---- */
 @media (max-width:880px){
-  .layout{display:block;padding:20px 16px 150px}
-  .top-in{gap:12px;padding:13px 16px}
-  .nav2{gap:14px}
+  .layout{display:block;padding:18px 14px 150px}
+  .topbar{padding:0 14px;gap:8px}
+  .article{padding:22px 18px 26px;border-radius:13px}
+  .home-t{font-size:24px}
   .dict-fab{display:flex}
   .pop{right:-8px}
   .art-body p{font-size:calc(var(--read-size) - 1.5px);line-height:1.9}
   .lv-mini{margin:0}
   .fc-word{font-size:31px}
+  .lnk-imp{margin-left:0}
   .dictwrap{position:fixed;left:0;right:0;bottom:0;z-index:60;
     transform:translateY(112%);transition:transform .26s ease}
   .dictwrap.open{transform:translateY(0)}
-  .dict{border-radius:18px 18px 0 0;max-height:64vh;position:relative;
-    box-shadow:0 -10px 34px rgba(28,43,69,.22);padding-top:24px}
+  .dict{border-radius:16px 16px 0 0;max-height:64vh;position:relative;
+    box-shadow:0 -10px 34px rgba(17,24,38,.22);padding-top:24px}
   .dict-close{display:flex}
   .shadowbar{bottom:14px}
 }

@@ -8,77 +8,174 @@ h1{font-size:20px} h2{font-size:15px;margin-top:26px;border-bottom:1px solid #E7
 pre{background:#F7F5EE;padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
 .ok{color:#2E7D5B;font-weight:700} .bad{color:#B5432F;font-weight:700} .mut{color:#8B94A6}
 button{background:#2F5AA8;color:#fff;border:none;padding:10px 20px;border-radius:6px;font-size:14px;cursor:pointer}
-input{padding:8px;border:1px solid #E7E5DC;border-radius:6px;font-size:14px;width:320px}
+input,select{padding:8px;border:1px solid #E7E5DC;border-radius:6px;font-size:14px}
+input{width:300px}
+code{background:#EDF2FA;padding:2px 6px;border-radius:4px;font-size:13px}
 </style></head><body>
 <h1>007学英语 · 连接诊断</h1>
-<p class="mut">这个页面会读取应用已保存的设置，实际调用一次 OpenRouter，把原始返回完整显示出来。<br>
+<p class="mut">这个页面读取应用已保存的设置，实际调用一次所选服务商，把原始返回完整显示出来。<br>
 API Key 只在本机使用，页面上只显示头尾几位。</p>
 
 <h2>1. 当前设置</h2>
 <div id="cfg">读取中…</div>
 
-<h2>2. 测试模型</h2>
-<p><input id="m" placeholder="模型 ID"> <button onclick="run()">开始测试</button></p>
-<p class="mut">留空则用应用当前设置的模型。想对比就分别填 <code>deepseek/deepseek-chat</code> 和 <code>anthropic/claude-sonnet-4.6</code> 各测一次。</p>
+<h2>2. 测试</h2>
+<p>
+  服务商 <select id="p" onchange="onPick()"></select>
+  模型 <input id="m" placeholder="留空用已保存的模型">
+  <button onclick="run()">开始测试</button>
+</p>
+<p class="mut" id="phint"></p>
 
 <h2>3. 结果</h2>
 <div id="out" class="mut">点上面的按钮开始</div>
 
 <script>
-var KEY="dd-or-key", MODEL="dd-or-model";
-var key="", model="";
-try{ key=localStorage.getItem(KEY)||""; }catch(e){}
-try{ model=localStorage.getItem(MODEL)||""; }catch(e){}
-try{ model=JSON.parse(model); }catch(e){}
-if(typeof model!=="string") model="";
+/* 这份服务商表和应用里的是同一套，但特意独立写一份：
+   万一应用本身出问题打不开，这个页面还能单独用来排查。 */
+var PROVIDERS={
+  openrouter:{name:"OpenRouter",protocol:"openai",proxy:true,
+    endpoint:"https://openrouter.ai/api/v1/chat/completions",
+    defaultModel:"deepseek/deepseek-v4-pro",site:"openrouter.ai"},
+  deepseek:{name:"DeepSeek 深度求索",protocol:"openai",
+    endpoint:"https://api.deepseek.com/chat/completions",
+    defaultModel:"deepseek-chat",site:"platform.deepseek.com"},
+  moonshot:{name:"月之暗面 Kimi",protocol:"openai",
+    endpoint:"https://api.moonshot.cn/v1/chat/completions",
+    defaultModel:"kimi-latest",site:"platform.moonshot.cn"},
+  zhipu:{name:"智谱 GLM",protocol:"openai",
+    endpoint:"https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    defaultModel:"glm-4-plus",site:"bigmodel.cn"},
+  qwen:{name:"阿里通义千问",protocol:"openai",
+    endpoint:"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    defaultModel:"qwen-plus",site:"bailian.console.aliyun.com"},
+  siliconflow:{name:"硅基流动 SiliconFlow",protocol:"openai",
+    endpoint:"https://api.siliconflow.cn/v1/chat/completions",
+    defaultModel:"deepseek-ai/DeepSeek-V3",site:"siliconflow.cn"},
+  anthropic:{name:"Anthropic Claude",protocol:"anthropic",proxy:true,
+    endpoint:"https://api.anthropic.com/v1/messages",
+    defaultModel:"claude-sonnet-5",site:"console.anthropic.com"},
+  openai:{name:"OpenAI",protocol:"openai",proxy:true,
+    endpoint:"https://api.openai.com/v1/chat/completions",
+    defaultModel:"gpt-4o",site:"platform.openai.com"},
+  gemini:{name:"Google Gemini",protocol:"openai",proxy:true,
+    endpoint:"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    defaultModel:"gemini-2.5-flash",site:"aistudio.google.com"}
+};
+
+function get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function getJSON(k){ try{ return JSON.parse(localStorage.getItem(k))||{}; }catch(e){ return {}; } }
+
+var provider = get("dd-provider") || "openrouter";
+if(!PROVIDERS[provider]) provider = "openrouter";
+var keys = getJSON("dd-keys-v1");
+var models = getJSON("dd-models-v1");
+// 兼容还没迁移过的老数据
+if(!keys.openrouter){ var ok=get("dd-or-key"); if(ok) keys.openrouter=ok; }
+if(!models.openrouter){ var om=get("dd-or-model"); if(om){ try{om=JSON.parse(om);}catch(e){} if(typeof om==="string") models.openrouter=om; } }
 
 function mask(k){ if(!k) return "(空)"; if(k.length<14) return k.slice(0,4)+"…("+k.length+"位，偏短)"; return k.slice(0,10)+"…"+k.slice(-4)+"  共"+k.length+"位"; }
 
-document.getElementById("cfg").innerHTML =
-  "<pre>API Key : "+mask(key)+"\n"+
-  "格式检查: "+(key.indexOf("sk-or-")===0?"<span class='ok'>✓ 以 sk-or- 开头</span>":"<span class='bad'>✗ 不是以 sk-or- 开头</span>")+"\n"+
-  "当前模型: "+(model||"(未设置，应用会用默认 anthropic/claude-sonnet-4.6)")+"</pre>";
-document.getElementById("m").value = model || "anthropic/claude-sonnet-4.6";
+function drawCfg(){
+  var h="<pre>当前服务商: "+PROVIDERS[provider].name+"\n\n已保存密钥的服务商：\n";
+  for(var id in PROVIDERS){
+    var k=keys[id];
+    h += "  "+(id===provider?"→ ":"  ")+PROVIDERS[id].name+
+         " : "+(k?"<span class='ok'>已配置</span> "+mask(k):"<span class='mut'>未配置</span>")+
+         (models[id]?"   模型 "+models[id]:"")+"\n";
+  }
+  document.getElementById("cfg").innerHTML = h+"</pre>";
+}
+
+function drawSelect(){
+  var s=document.getElementById("p"), h="";
+  for(var id in PROVIDERS){
+    h += '<option value="'+id+'"'+(id===provider?" selected":"")+'>'+PROVIDERS[id].name+
+         (keys[id]?"（已配置）":"（未配置）")+'</option>';
+  }
+  s.innerHTML=h;
+}
+
+function onPick(){
+  var id=document.getElementById("p").value;
+  var p=PROVIDERS[id];
+  document.getElementById("m").value = models[id]||"";
+  document.getElementById("m").placeholder = p.defaultModel;
+  document.getElementById("phint").innerHTML =
+    "接口地址 <code>"+p.endpoint+"</code>　协议 <code>"+p.protocol+"</code>　"+
+    (p.proxy?"<b>国内需要开代理</b>":"国内可直连");
+}
+
+drawCfg(); drawSelect(); onPick();
 
 async function run(){
   var out=document.getElementById("out");
-  var mm=document.getElementById("m").value.trim()||model||"anthropic/claude-sonnet-4.6";
-  if(!key){ out.innerHTML="<pre class='bad'>没读到 API Key。请先在应用里填好 Key，再回到这个页面。</pre>"; return; }
-  out.innerHTML="<pre>正在请求 "+mm+" …</pre>";
+  var id=document.getElementById("p").value;
+  var p=PROVIDERS[id];
+  var key=keys[id]||"";
+  var mm=document.getElementById("m").value.trim()||models[id]||p.defaultModel;
+  if(!key){
+    out.innerHTML="<pre class='bad'>这家服务商（"+p.name+"）还没有保存过 API Key。\n请先在应用的设置页选中它并填好 Key，再回到这个页面。</pre>";
+    return;
+  }
+  out.innerHTML="<pre>正在请求 "+p.name+" 的 "+mm+" …</pre>";
+
+  var headers, body;
+  if(p.protocol==="anthropic"){
+    headers={"Content-Type":"application/json","x-api-key":key,
+             "anthropic-version":"2023-06-01",
+             "anthropic-dangerous-direct-browser-access":"true"};
+    body={model:mm,max_tokens:1024,thinking:{type:"disabled"},
+          messages:[{role:"user",content:'只返回JSON，不要任何其他文字：{"ok":1,"msg":"hello"}'}]};
+  }else{
+    headers={"Content-Type":"application/json","Authorization":"Bearer "+key,
+             "X-Title":"007 English Reader"};
+    body={model:mm,messages:[{role:"user",content:'只返回JSON，不要任何其他文字：{"ok":1,"msg":"hello"}'}]};
+  }
+
   var res, raw, status;
   try{
-    res = await fetch("https://openrouter.ai/api/v1/chat/completions",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key,"X-Title":"007 English Reader"},
-      body: JSON.stringify({model:mm,messages:[{role:"user",content:'只返回JSON，不要任何其他文字：{"ok":1,"msg":"hello"}'}]})
-    });
+    res = await fetch(p.endpoint,{method:"POST",headers:headers,body:JSON.stringify(body)});
     status = res.status;
     raw = await res.text();
   }catch(e){
-    out.innerHTML="<pre class='bad'>请求根本没发出去（fetch 抛异常）\n"+e.name+": "+e.message+"</pre>";
+    out.innerHTML="<pre class='bad'>请求根本没发出去（fetch 抛异常）\n"+e.name+": "+e.message+
+      "\n\n常见原因：\n  · 网络不通"+(p.proxy?"（这家需要代理，检查代理是否开着）":"")+
+      "\n  · 浏览器拦截了跨域请求（确认用的是 Chrome，不是 Safari）</pre>";
     return;
   }
+
   var html = "<pre>HTTP 状态码: <b>"+status+"</b>\n\n===== 原始返回 =====\n"+
              raw.slice(0,2500).replace(/</g,"&lt;")+"</pre>";
   var diag="";
-  if(status===401) diag="<p class='bad'>→ 401：API Key 无效或被拒。</p>";
-  else if(status===402) diag="<p class='bad'>→ 402：账户余额不足。DeepSeek 有免费额度所以能用，Claude 是付费的，需要去 openrouter.ai 的 Credits 页面充值。</p>";
-  else if(status===403) diag="<p class='bad'>→ 403：这个 Key 没有调用该模型的权限，或账户的数据策略（Privacy）设置挡住了。去 openrouter.ai/settings/privacy 看看。</p>";
-  else if(status===429) diag="<p class='bad'>→ 429：请求过于频繁，或免费额度已用尽。</p>";
+  if(status===401) diag="<p class='bad'>→ 401：API Key 无效或被拒。去 "+p.site+" 确认密钥没写错、没过期。</p>";
+  else if(status===402) diag="<p class='bad'>→ 402：账户余额不足，去 "+p.site+" 充值。</p>";
+  else if(status===403) diag="<p class='bad'>→ 403：这个 Key 没有调用该模型的权限，或被服务商的风控挡住了"+
+    (p.proxy?"（境外服务商常见原因：代理出口是机房 IP，需要换成家宽/住宅 IP 节点）":"")+"。</p>";
+  else if(status===404) diag="<p class='bad'>→ 404：模型名不存在。回到应用设置页点「获取可用模型」看看正确的名字。</p>";
+  else if(status===429) diag="<p class='bad'>→ 429：请求过于频繁，或额度已用尽。</p>";
+  else if(status===400) diag="<p class='bad'>→ 400：请求被拒绝，看下面原始返回里的 message。"+
+    "注意 Google Gemini 会把「密钥无效」也报成 400——如果 message 里提到 API key，那就是密钥问题，不是格式问题。</p>";
   else if(status===200){
     try{
       var d=JSON.parse(raw);
-      var c=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:undefined;
-      diag="<p>content 的类型: <b>"+(Array.isArray(c)?"数组":typeof c)+"</b></p>";
-      if(typeof c!=="string"){
-        diag+="<p class='bad'>→ 找到问题了：应用里的代码假设 content 是字符串，直接调用 .replace()。这里不是字符串，会抛异常，被误报成「出了点问题，重试一下」。</p>";
+      var c;
+      if(Array.isArray(d.content)){
+        c = d.content.filter(function(b){return b&&b.type==="text";}).map(function(b){return b.text;}).join("");
+      }else{
+        c = d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:undefined;
+      }
+      if(d.error){
+        diag="<p class='bad'>→ HTTP 200 但返回体里带 error，看下面的原始返回。</p>";
+      }else if(typeof c!=="string"||!c){
+        diag="<p class='bad'>→ 没取到文本内容（类型是 "+(Array.isArray(c)?"数组":typeof c)+"）。这个模型的返回结构和应用预期的不一样。</p>";
       }else{
         var clean=c.replace(/```json|```/g,"").trim();
         var s=clean.indexOf("{"), e2=clean.lastIndexOf("}");
-        if(s===-1||e2===-1){ diag+="<p class='bad'>→ 返回里找不到 JSON，应用会报「出了点问题」。</p>"; }
+        if(s===-1||e2===-1){ diag="<p class='bad'>→ 返回里找不到 JSON，应用会报「出了点问题」。这个模型可能不擅长按格式输出，换一个试试。</p>"; }
         else{
-          try{ JSON.parse(clean.slice(s,e2+1)); diag+="<p class='ok'>→ 这个模型工作正常，JSON 能解析。</p>"; }
-          catch(er){ diag+="<p class='bad'>→ JSON 解析失败: "+er.message+"</p>"; }
+          try{ JSON.parse(clean.slice(s,e2+1)); diag="<p class='ok'>→ 这个模型工作正常，JSON 能解析，可以放心用。</p>"; }
+          catch(er){ diag="<p class='bad'>→ JSON 解析失败: "+er.message+"</p>"; }
         }
       }
     }catch(er){ diag="<p class='bad'>→ 返回不是合法 JSON: "+er.message+"</p>"; }
