@@ -41,7 +41,7 @@ import {
   Play, Square, Dices, Trash2, Copy, Loader2, BookOpen,
   Brain, BarChart3, Puzzle, ClipboardCheck,
   ChevronLeft, ChevronRight, RotateCcw, Turtle, Flame,
-  Languages, Palette, Upload, Download, FileUp, ChevronDown, MoreHorizontal,
+  Languages, Upload, Download, FileUp, ChevronDown, MoreHorizontal,
   KeyRound, Settings, Bookmark, Menu, Globe, ExternalLink
 } from "lucide-react";
 import mammoth from "mammoth";
@@ -697,6 +697,20 @@ const clampRate = (r) => Math.min(1.4, Math.max(0.5, r || 1));
 /* 复习进度：没有记录的旧词视为"到期" */
 const rvOf = (v) => v.rv || { due: v.savedAt || 0, iv: 0, streak: 0 };
 
+/* 能织进文章的英文表达：英文词条取词本身，中文词条取第一个英文译词。
+   生词本只存这两类（句子 type:"sent" 不入库），别的一律返回空跳过。 */
+const WEAVE_MAX = 6;
+function weaveTermOf(v) {
+  const d = v && v.data;
+  if (!d) return "";
+  if (d.type === "en") return String(d.word || v.surface || "").trim();
+  if (d.type === "zh") {
+    const t = (d.translations || [])[0];
+    return String((t && (t.en || t.word)) || "").trim();
+  }
+  return "";
+}
+
 const DAY = 86400000;
 function dateStr(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -949,6 +963,46 @@ export default function App() {
     return vocab.filter((v) => (v.savedAt || 0) >= t0.getTime()).length;
   }, [vocab]);
 
+  /* ---- AI 现写：可织入的生词候选 ---- */
+  // 排序：没记牢的（streak<2）排前，其次到期早的。给 12 个够选了。
+  const weaveCands = useMemo(() => {
+    const seen = new Set();
+    return vocab
+      .map((v) => ({ v, term: weaveTermOf(v) }))
+      .filter(({ term }) => {
+        const k = term.toLowerCase();
+        if (!term || seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .sort((a, b) => {
+        const wa = rvOf(a.v).streak < 2, wb = rvOf(b.v).streak < 2;
+        if (wa !== wb) return wa ? -1 : 1;
+        return rvOf(a.v).due - rvOf(b.v).due;
+      })
+      .slice(0, 12)
+      .map((x) => x.term);
+  }, [vocab]);
+
+  // weaveSel 为 null 表示"没手动选过"，跟着候选自动走；点过一次就固定成显式列表。
+  const [weaveOn, setWeaveOn] = useState(true);
+  const [weaveSel, setWeaveSel] = useState(null);
+  const weavePicked = useMemo(
+    () => (weaveSel ? weaveCands.filter((w) => weaveSel.includes(w)) : weaveCands.slice(0, 4)),
+    [weaveCands, weaveSel]
+  );
+  function toggleWeave(w) {
+    setWeaveSel((cur) => {
+      const base = cur || weaveCands.slice(0, 4);
+      if (base.includes(w)) return base.filter((x) => x !== w);
+      if (base.length >= WEAVE_MAX) {
+        showToast(`最多选 ${WEAVE_MAX} 个，再多文章会写得生硬`);
+        return base;
+      }
+      return [...base, w];
+    });
+  }
+
   /* ---- 语音 ---- */
   function cancelSpeech() {
     try { window.speechSynthesis.cancel(); } catch (e) {}
@@ -1070,12 +1124,8 @@ export default function App() {
     setGenError("");
     const lv = LEVELS.find((l) => l.id === theLevel);
 
-    // 挑最需要复习的生词织进去
-    const weave = vocab
-      .filter((v) => v.data?.type === "en" && v.data.word && rvOf(v).streak < 2)
-      .sort((a, b) => rvOf(a).due - rvOf(b).due)
-      .slice(0, 4)
-      .map((v) => v.data.word);
+    // 织哪些词由首页「AI 现写」卡决定，这里只管用
+    const weave = weaveOn ? weavePicked : [];
 
     const weaveLine = weave.length
       ? `\n- 请自然地用上这些单词（是学习者的生词，帮 TA 复习）：${weave.join(", ")}。个别词若与该难度实在不符可省略，切勿生硬堆砌`
@@ -1086,7 +1136,10 @@ export default function App() {
 严格要求：
 - 长度约 ${lv.words} 词，分 2-4 段
 - ${lv.spec}
-- 内容有趣、有信息量、角度新颖，适合中国英语学习者阅读
+- 内容有趣、有信息量，适合中国英语学习者阅读
+- **只写已被确认的知识**：科学共识、公认的历史事实、教科书级别的常识。绝不写伪科学、民间偏方、都市传说、阴谋论，也不写"据说""有人认为"这类没有依据的说法
+- **拿不准就不写**：不要编造具体数字、年份、人名、机构名、研究结论或引语。宁可只讲定性的、大方向上不会错的内容，也不要为了具体而编
+- 若这个话题学界本身尚无定论，就如实写明目前还有争议，不要挑一边当成结论讲
 - 标题简洁吸引人${weaveLine}
 
 只返回 JSON，不要任何其他文字、解释或 markdown 代码块：
@@ -1103,11 +1156,10 @@ export default function App() {
       if (woven.length) {
         const set = new Set(woven.map((w) => w.toLowerCase()));
         setVocab((vs) =>
-          vs.map((v) =>
-            v.data?.type === "en" && set.has((v.data.word || "").toLowerCase())
-              ? { ...v, meet: (v.meet || 1) + 1 }
-              : v
-          )
+          vs.map((v) => {
+            const t = weaveTermOf(v).toLowerCase();
+            return t && set.has(t) ? { ...v, meet: (v.meet || 1) + 1 } : v;
+          })
         );
       }
 
@@ -1911,7 +1963,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
       </aside>
 
       <div className="mainwrap">
-        {/* ======= 细顶条：查词 + 外观 ======= */}
+        {/* ======= 细顶条：只放查词 ======= */}
         <header className="topbar">
           <button className="menubtn" onClick={() => setNavOpen(true)} aria-label="菜单">
             <Menu size={18} />
@@ -1926,14 +1978,6 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               aria-label="查词"
             />
           </div>
-
-          <button
-            className={view === "settings" ? "gearbtn on" : "gearbtn"}
-            onClick={() => go("settings")}
-            aria-label="设置" title="设置"
-          >
-            <Palette size={17} /> <span className="gearlbl">外观与模型</span>
-          </button>
         </header>
 
         {/* 词典只在阅读页有意义，生词本/统计/复习页要腾出整幅宽度 */}
@@ -2005,35 +2049,9 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
             /* ---- 空状态 / 生成器 ---- */
             <div className="home">
               <h1 className="home-t">今天想读点什么？</h1>
-              <p className="home-sub">输入主题，去网上找一篇真实的英文文章来读——有出处、可核对。</p>
+              <p className="home-sub">让 AI 按你的难度和生词现写一篇，或者导入自己的材料；想读有出处的真实文章，点下面的话题卡。</p>
 
               <div className="genbox">
-              <div className="genrow">
-                <input
-                  className="topic-in"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") fetchRealArticle(topic); }}
-                  placeholder="输入主题，去网上找一篇真实的英文文章"
-                />
-                <button className="btn-pri" onClick={() => fetchRealArticle(topic)} disabled={realBusy}>
-                  {realBusy
-                    ? <><Loader2 size={16} className="spin" /> 搜索中…</>
-                    : <><Globe size={16} /> 找真实文章</>}
-                </button>
-              </div>
-
-              {/* AI 现写降为备选：它写的是编的，只当语言材料用 */}
-              <div className="genalt">
-                <span className="genalt-t">
-                  找不到合适的，或者只想练语言？
-                </span>
-                <button className="btn-gh" onClick={() => generateArticle()} disabled={genLoading}>
-                  <Sparkles size={14} /> 让 AI 现写一篇
-                </button>
-                <span className="genalt-h">内容是编的，别当事实</span>
-              </div>
-
               {!providerOf(providerId).webSearch && (
                 <div className="genwarn">
                   当前服务商 <b>{providerOf(providerId).name}</b> 不支持联网搜索，找不了真实文章。
@@ -2042,17 +2060,9 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               )}
 
               <div className="genfoot">
-                <span className="chips-l">难度</span>
-                {LEVELS.map((l) => (
-                  <button
-                    key={l.id}
-                    className={l.id === level ? "lvt on" : "lvt"}
-                    title={l.tag}
-                    onClick={() => { setLevel(l.id); setStats((st) => ({ ...st, lv: l.id })); }}
-                  >{l.label}</button>
-                ))}
-                <span className="lv-tag" title="真实文章的难度由原文决定，这里只是搜索时的偏好">
-                  {LEVELS.find((l) => l.id === level)?.tag}
+                <span className="lv-tag">
+                  下方话题卡会去网上搜真实文章，尽量贴近你设的难度
+                  （<b>{LEVELS.find((l) => l.id === level)?.label}</b>），但原文难度终究由原文决定
                 </span>
                 <button className="lnk-imp" onClick={() => { setImpOpen((o) => !o); setImpErr(""); }}>
                   <Upload size={13} /> 导入自己的材料
@@ -2128,6 +2138,80 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               )}
               </div>{/* /genbox */}
 
+              {/* ---- AI 现写：单独一类，跟「找真实文章」明确分开 ---- */}
+              <div className="aibox">
+                <div className="ai-head">
+                  <span className="ai-tag"><Sparkles size={13} /> AI 现写</span>
+                  <span className="ai-sub">按下面的设定当场写一篇。<b>只写公认的知识</b>，但具体数字、年份可能有出入，别直接引用</span>
+                </div>
+
+                <div className="ai-row">
+                  <span className="ai-l">主题</span>
+                  <input
+                    className="topic-in ai-in"
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") generateArticle(); }}
+                    placeholder="想读什么？比如：悬索桥是怎么建起来的"
+                  />
+                </div>
+
+                <div className="ai-row">
+                  <span className="ai-l">难度</span>
+                  <div className="ai-chips">
+                    {LEVELS.map((l) => (
+                      <button
+                        key={l.id}
+                        className={l.id === level ? "lvt on" : "lvt"}
+                        title={l.tag}
+                        onClick={() => { setLevel(l.id); setStats((st) => ({ ...st, lv: l.id })); }}
+                      >{l.label}</button>
+                    ))}
+                  </div>
+                  <span className="ai-hint">
+                    {LEVELS.find((l) => l.id === level)?.tag} · 约 {LEVELS.find((l) => l.id === level)?.words} 词
+                  </span>
+                </div>
+
+                <div className="ai-row">
+                  <span className="ai-l">复习生词</span>
+                  <button
+                    className={weaveOn ? "wsw on" : "wsw"}
+                    onClick={() => setWeaveOn((o) => !o)}
+                    aria-pressed={weaveOn}
+                    title="把生词本里的词织进文章，在上下文里再见一次"
+                  ><i /></button>
+                  <span className="ai-hint">
+                    {!weaveCands.length
+                      ? "生词本还空着——查几个词存起来，之后就能织进文章里复习"
+                      : weaveOn
+                        ? `已选 ${weavePicked.length} 个，点词可增减（最多 ${WEAVE_MAX} 个）`
+                        : "关着，文章不会特意用你的生词"}
+                  </span>
+                </div>
+
+                {weaveOn && weaveCands.length > 0 && (
+                  <div className="wchips">
+                    {weaveCands.map((w) => (
+                      <button
+                        key={w}
+                        className={weavePicked.includes(w) ? "wc on" : "wc"}
+                        onClick={() => toggleWeave(w)}
+                      >{w}</button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="ai-foot">
+                  <button className="btn-pri" onClick={() => generateArticle()} disabled={genLoading}>
+                    <Sparkles size={16} /> 让 AI 现写一篇
+                  </button>
+                  <span className="ai-hint">
+                    {topic.trim() ? "" : "先在上面写个主题，或点下面的话题卡"}
+                  </span>
+                </div>
+              </div>
+
               {/* 数据条：全部来自已有数据，没有新增统计 */}
               <div className="statrow">
                 <div className="stt">
@@ -2152,10 +2236,10 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                   <div className="cardgrid">
                     {tabs.map((t) => (
                       <button key={t.id} className="ccard" onClick={() => switchTab(t.id)}>
-                        <span className={t.srcUrl ? "ctag real" : "ctag"}>
+                        <span className={t.srcUrl ? "ctag real" : t.imported ? "ctag" : "ctag ai"}>
                           {t.srcUrl ? "真实来源"
                             : t.imported ? "导入"
-                            : (LEVELS.find((l) => l.id === t.level)?.label || "文章")}
+                            : `AI · ${LEVELS.find((l) => l.id === t.level)?.label || "现写"}`}
                         </span>
                         <b>{t.title || "未命名"}</b>
                         <p>
@@ -3623,12 +3707,39 @@ button:disabled{opacity:.55;cursor:default}
   background:var(--paper);color:var(--ink2)}
 .lvt:hover{border-color:var(--mut);color:var(--ink)}
 .lvt.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:700}
-.lv-tag{font-size:12px;color:var(--mut);margin-left:2px}
+.lv-tag{font-size:12px;color:var(--mut);margin-left:2px;line-height:1.7;max-width:min(100%,540px)}
+.lv-tag b{color:var(--ink2);font-weight:700}
 .chips-l{font-size:12.5px;color:var(--mut);font-weight:600}
-.genalt{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:13px;
-  padding-top:13px;border-top:1px solid var(--line2)}
-.genalt-t{font-size:12.5px;color:var(--ink2)}
-.genalt-h{font-size:12px;color:var(--mut)}
+/* AI 现写卡：跟「找真实文章」并列的第二类入口 */
+.aibox{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:18px 20px;box-shadow:var(--sh);margin-top:16px}
+.ai-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ai-tag{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;
+  color:var(--hi-text);background:var(--hi-wash);border:1px solid var(--hi-soft);
+  border-radius:7px;padding:4px 9px;flex:none}
+.ai-sub{font-size:12.5px;color:var(--mut);line-height:1.6}
+.ai-sub b{color:var(--hi-text);font-weight:700}
+.ai-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:14px}
+.ai-l{font-size:12.5px;color:var(--mut);font-weight:600;min-width:52px}
+.ai-chips{display:flex;gap:6px;flex-wrap:wrap}
+.ai-hint{font-size:12px;color:var(--mut);line-height:1.6}
+.ai-hint b{color:var(--ink2);font-weight:700}
+.wsw{width:38px;height:22px;border-radius:99px;background:var(--line);border:none;
+  padding:0;position:relative;transition:background .16s;flex:none}
+.wsw i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 2px rgba(17,24,38,.25);transition:transform .16s}
+.wsw.on{background:var(--blue)}
+.wsw.on i{transform:translateX(16px)}
+.ai-in{flex:1;min-width:220px}
+.wchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-left:61px}
+.wc{font-size:12.5px;padding:5px 11px;border-radius:8px;border:1px dashed var(--line);
+  background:var(--paper);color:var(--mut)}
+.wc:hover{border-color:var(--mut);color:var(--ink2)}
+.wc.on{background:var(--hi-wash);border:1px solid var(--hi-soft);
+  color:var(--hi-text);font-weight:600}
+.ai-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;
+  padding-top:14px;border-top:1px solid var(--line2)}
+@media(max-width:640px){.wchips{padding-left:0}}
 .genwarn{margin-top:12px;background:var(--hi-wash);border:1px solid var(--hi-soft);
   border-radius:10px;padding:10px 13px;font-size:12.5px;color:var(--hi-text);line-height:1.7}
 .genwarn b{font-weight:700}
@@ -3668,6 +3779,7 @@ button:disabled{opacity:.55;cursor:default}
 .ccard p{font-size:12.5px;color:var(--mut);margin-top:6px;line-height:1.6;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .ccard .ctag.real{background:var(--ok-bg);color:var(--ok)}
+.ccard .ctag.ai{background:var(--hi-wash);color:var(--hi-text)}
 .ccard .cprog{height:4px;background:var(--line2);border-radius:99px;margin-top:12px;overflow:hidden}
 .ccard .cprog i{display:block;height:100%;background:var(--blue);border-radius:99px}
 .ccard .cmeta{font-size:11.5px;color:var(--mut);margin-top:6px}
@@ -3941,11 +4053,6 @@ button.vb-w:hover{color:var(--blue)}
 @keyframes up{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 
 /* ---- 设置页 ---- */
-.gearbtn{display:inline-flex;align-items:center;gap:7px;color:var(--ink2);padding:8px 13px;
-  border-radius:9px;border:1px solid var(--line);background:var(--card);font-size:13.5px;font-weight:600}
-.gearbtn:hover{color:var(--ink);border-color:var(--mut)}
-.gearbtn.on{background:var(--blue-bg);border-color:var(--blue);color:var(--blue)}
-.gearlbl{white-space:nowrap}
 .sl-set{margin-top:8px}
 .setpage{max-width:720px;padding-top:2px}
 .setgrp{background:var(--card);border:1px solid var(--line);border-radius:14px;
