@@ -956,13 +956,6 @@ export default function App() {
     () => vocab.filter((v) => rvOf(v).due <= Date.now()),
     [vocab]
   );
-  // 今天新增的生词，直接从 savedAt 算，不用另开一份统计。
-  // 注意必须放在 vocab 声明之后，提到组件顶部会踩暂时性死区导致白屏。
-  const newToday = useMemo(() => {
-    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
-    return vocab.filter((v) => (v.savedAt || 0) >= t0.getTime()).length;
-  }, [vocab]);
-
   /* ---- AI 现写：可织入的生词候选 ---- */
   // 排序：没记牢的（streak<2）排前，其次到期早的。给 12 个够选了。
   const weaveCands = useMemo(() => {
@@ -2060,10 +2053,6 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               )}
 
               <div className="genfoot">
-                <span className="lv-tag">
-                  下方话题卡会去网上搜真实文章，尽量贴近你设的难度
-                  （<b>{LEVELS.find((l) => l.id === level)?.label}</b>），但原文难度终究由原文决定
-                </span>
                 <button className="lnk-imp" onClick={() => { setImpOpen((o) => !o); setImpErr(""); }}>
                   <Upload size={13} /> 导入自己的材料
                   <ChevronDown size={13} className={impOpen ? "flip" : ""} />
@@ -2092,7 +2081,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                         <button className="btn-pri small" onClick={() => importFromText(impText, "粘贴的文本")}>
                           <BookOpen size={14} /> 开始阅读
                         </button>
-                        <span className="imp-hint">超过约 350 词会自动截取，保证查词、小测、翻译稳定</span>
+                        <span className="imp-hint">长文会按段落自动分章，每章约 350 词，查词和小测只针对当前这一章</span>
                       </div>
                     </>
                   )}
@@ -2209,24 +2198,6 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                   <span className="ai-hint">
                     {topic.trim() ? "" : "先在上面写个主题，或点下面的话题卡"}
                   </span>
-                </div>
-              </div>
-
-              {/* 数据条：全部来自已有数据，没有新增统计 */}
-              <div className="statrow">
-                <div className="stt">
-                  {newToday > 0 && <span className="stpill">+{newToday} 今天</span>}
-                  <b>{vocab.length}</b><span>生词本</span>
-                </div>
-                <button className={dueList.length ? "stt go" : "stt"}
-                  onClick={() => dueList.length && startReview()}>
-                  <b>{dueList.length}</b><span>{dueList.length ? "待复习 · 点开始" : "待复习"}</span>
-                </button>
-                <div className="stt">
-                  <b>{streak}</b><span>连续天数</span>
-                </div>
-                <div className="stt">
-                  <b>{stats.total || 0}</b><span>累计读完</span>
                 </div>
               </div>
 
@@ -3692,8 +3663,10 @@ button:disabled{opacity:.55;cursor:default}
 .home{padding-top:4px}
 .home-t{font-size:28px;font-weight:800;letter-spacing:-.3px}
 .home-sub{color:var(--ink2);font-size:14.5px;margin-top:7px}
-.genbox{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px;
-  margin-top:20px;box-shadow:var(--sh)}
+.genbox{background:var(--card);border:1px solid var(--line);border-radius:15px;
+  padding:10px 20px;margin-top:20px;box-shadow:var(--sh)}
+/* 展开导入面板、或有服务商提示条时才恢复正常内边距 */
+.genbox:has(.imp),.genbox:has(.genwarn),.genbox:has(.err){padding:20px}
 .genrow{display:flex;gap:10px;flex-wrap:wrap}
 .topic-in{flex:1;min-width:220px;font-size:15px;padding:12px 15px;border:1px solid var(--line);
   border-radius:10px;background:var(--paper);color:var(--ink);outline:none;font-family:var(--sans)}
@@ -3702,7 +3675,8 @@ button:disabled{opacity:.55;cursor:default}
   font-size:14.5px;font-weight:700;padding:12px 24px;border-radius:10px}
 .btn-pri:hover{background:var(--blue-d)}
 .btn-pri.small{font-size:13px;padding:9px 16px}
-.genfoot{display:flex;align-items:center;gap:7px;margin-top:15px;flex-wrap:wrap}
+.genfoot{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.genwarn + .genfoot{margin-top:12px}
 .lvt{font-size:13px;padding:6px 13px;border-radius:8px;border:1px solid var(--line);
   background:var(--paper);color:var(--ink2)}
 .lvt:hover{border-color:var(--mut);color:var(--ink)}
@@ -3753,17 +3727,6 @@ button:disabled{opacity:.55;cursor:default}
 .cs.on{background:var(--card);color:var(--ink);font-weight:600;box-shadow:var(--sh)}
 
 /* 数据条 */
-.statrow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:22px}
-.stt{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 15px;
-  text-align:left;box-shadow:var(--sh)}
-.stt b{font-size:23px;font-weight:800;display:block;letter-spacing:-.5px}
-.stpill{float:right;font-size:11px;font-weight:700;background:var(--ok-bg);color:var(--ok);
-  border-radius:99px;padding:2px 8px;margin-top:3px}
-.stt span{font-size:12.5px;color:var(--mut);display:block;margin-top:2px}
-.stt.go{cursor:pointer}
-.stt.go b{color:var(--blue)}
-.stt.go:hover{border-color:var(--blue);box-shadow:var(--sh-l)}
-
 /* 分区标题 + 卡片网格 */
 .sechead{display:flex;align-items:center;justify-content:space-between;gap:12px;
   margin:30px 0 13px;flex-wrap:wrap}
@@ -4205,7 +4168,6 @@ button.vb-w:hover{color:var(--blue)}
   .sidebar.open{transform:none}
   .sbmask{display:block;position:fixed;inset:0;z-index:55;background:rgba(17,24,38,.4)}
   .menubtn{display:inline-flex}
-  .statrow{grid-template-columns:repeat(2,1fr)}
 }
 
 /* ---- 移动端 ---- */
