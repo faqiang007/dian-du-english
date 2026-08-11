@@ -1249,9 +1249,11 @@ translations 按常用程度给 1-3 个；examples 恰好 2 条（使用第一�
       prompt = `你是一本专业的英汉词典（风格类似有道词典）。查询词条：「${q}」${sentence ? `\n它出现在句子："${sentence}"` : ""}
 
 只返回 JSON，不要任何其他文字或 markdown 代码块：
-{"type":"en","word":"单词原形","phonetic_us":"美式音标，含斜杠","phonetic_uk":"英式音标，含斜杠","context_cn":${sentence ? '"该词在上面句子中的准确中文含义，一句话说清"' : "null"},"senses":[{"pos":"词性缩写如 n. / v. / adj.","cn":"中文释义"}],"examples":[{"en":"英文例句","cn":"中文翻译"}]}
+{"type":"en","word":"单词原形","phonetic_us":"美式音标，含斜杠","phonetic_uk":"英式音标，含斜杠","context_cn":${sentence ? '"该词在上面句子中的准确中文含义，一句话说清"' : "null"},"tech_cn":"该词在计算机／IT 领域的专门含义，白话说清，不超过 40 字；没有专门含义就填 null","senses":[{"pos":"词性缩写如 n. / v. / adj.","cn":"中文释义"}],"examples":[{"en":"英文例句","cn":"中文翻译"}]}
 
-senses 按常用程度排列，最多 4 条；examples 恰好 2 条且包含查询词，难度适中。若词条是短语，phonetic 可为 null。`;
+senses 按常用程度排列，最多 4 条；examples 恰好 2 条且包含查询词，难度适中。若词条是短语，phonetic 可为 null。
+
+tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填（如 artifact、default、thread、cache、prompt）。日常词在计算机里没有区别于字面的专门用法时一律填 null，不要为了凑内容硬扯。`;
     }
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
@@ -2821,6 +2823,16 @@ function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave }) {
         ))}
       </ul>
 
+      {/* 计算机领域的专门含义。放在释义之后而不是之前：手机抽屉只有 64vh，
+          彩色块堆在上面会把释义挤出首屏，而释义才是查词的主角。
+          日常词模型返回 null，整块不渲染——挂一行「无特殊含义」纯属噪音。 */}
+      {d.tech_cn && (
+        <div className="ctx tech">
+          <span className="ctx-l tech-l">计算机</span>
+          {d.tech_cn}
+        </div>
+      )}
+
       {d.examples?.length > 0 && (
         <div className="exs">
           <div className="sec-l">例句</div>
@@ -3884,6 +3896,10 @@ button:disabled{opacity:.55;cursor:default}
   padding:10px 12px;font-size:14px;line-height:1.6}
 .ctx-l{font-size:11px;font-weight:700;color:#9A7B00;background:var(--hi);border-radius:5px;
   padding:1px 6px;margin-right:7px}
+/* 标签文字用 --card 而不是写死 #fff：--blue 在夜间主题是亮蓝(#8095F5)，
+   白字压上去只有 2.6:1 糊成一片；--card 在每套主题里都跟 --blue 深浅相反。 */
+.ctx.tech{background:var(--blue-bg);border-color:var(--blue-bg)}
+.ctx-l.tech-l{color:var(--card);background:var(--blue)}
 .sentbtn{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;
   color:var(--blue);border:1px dashed var(--blue);border-radius:9px;padding:6px 12px;background:var(--blue-bg)}
 .sentbtn:hover{background:var(--card)}
