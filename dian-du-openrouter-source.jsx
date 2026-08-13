@@ -163,6 +163,28 @@ const ARTICLE_KEY = "dd-article-v1";
 const STATS_KEY = "dd-stats-v1";
 const TABS_KEY = "dd-tabs-v1";
 const MAX_TABS = 6;
+
+/* ---- 读过的文章 ----
+   以前关掉标签页或「换一篇」就把原文永久删掉了，读过的东西除了当下开着的
+   6 篇之外一律不存在。而重读旧文章巩固词汇的效果比读新文章更好——同一批
+   词在同一个语境里再见一次。所以关掉/替换时先归档。
+   只留最近 HISTORY_MAX 篇、总量不超过 HISTORY_CHARS，超了丢最旧的；
+   译文不归档（占地方且能随时重新生成）。 */
+const HISTORY_KEY = "dd-history-v1";
+const HISTORY_MAX = 20;
+const HISTORY_CHARS = 400000;
+
+function trimHistory(list) {
+  const out = [];
+  let chars = 0;
+  for (const h of list) {
+    const n = (h.chapters || []).join("").length;
+    if (out.length >= HISTORY_MAX || chars + n > HISTORY_CHARS) break;
+    out.push(h);
+    chars += n;
+  }
+  return out;
+}
 /* 每章的目标词数。定成 350 是因为查词、译文、小测都要把整章发给模型，
    再长就容易漏段和跑题。想读长文档不靠调大它，靠分章。 */
 const CHAPTER_WORDS = 350;
@@ -789,6 +811,18 @@ function weaveTermOf(v) {
 }
 
 const DAY = 86400000;
+/* 「3 天前」这类相对时间。读过的文章列表里，具体日期没意义，
+   "多久没碰了"才是决定要不要重读的依据。 */
+function agoText(ts) {
+  if (!ts) return "";
+  const d = Math.floor((Date.now() - ts) / DAY);
+  if (d <= 0) return "今天读过";
+  if (d === 1) return "昨天读过";
+  if (d < 7) return `${d} 天前读过`;
+  if (d < 30) return `${Math.floor(d / 7)} 周前读过`;
+  return `${Math.floor(d / 30)} 个月前读过`;
+}
+
 function dateStr(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
@@ -851,7 +885,22 @@ export default function App() {
     }
     return true;
   }
+  /* 文章要被销毁前先留一份。同一篇重复归档时按 id 去重并提到最前，
+     免得同一篇在「读过的」里出现好几遍。 */
+  function archive(art) {
+    if (!art || !(art.chapters || []).length) return;
+    const rec = {
+      id: art.id, title: art.title, topic: art.topic, autoTopic: art.autoTopic,
+      level: art.level, cn_intro: art.cn_intro || "", chapters: art.chapters,
+      woven: art.woven || [], imported: !!art.imported,
+      srcUrl: art.srcUrl || "", srcSite: art.srcSite || "",
+      readAt: Date.now(),
+    };
+    setHistory((hs) => trimHistory([rec, ...hs.filter((h) => h.id !== art.id)]));
+  }
+
   function closeTab(id) {
+    archive(tabs.find((t) => t.id === id));
     setTabs((ts) => {
       const next = ts.filter((t) => t.id !== id);
       if (id === activeId) {
@@ -863,6 +912,26 @@ export default function App() {
       return next;
     });
   }
+  /* 重读：把归档的文章原样开回来。已经开着就直接切过去，不重复开一份。
+     记录留在历史里不删——重读一遍不等于读完了，下周可能还想再读。 */
+  function reread(h) {
+    const open = tabs.find((t) => t.id === h.id);
+    if (open) { switchTab(h.id); setView("read"); return; }
+    if (!canOpenNewTab()) return;
+    hardStop();
+    const art = { ...h, ch: 0, trans: {} };
+    delete art.readAt;
+    setTabs((ts) => [...ts, art]);
+    setActiveId(h.id);
+    setView("read");
+    setQuiz({ st: "idle" });
+    setShowTrans(false);
+    clickedRef.current = new Set();
+    setClicks(0);
+    setLvHint(null);
+    window.scrollTo({ top: 0 });
+  }
+
   function switchTab(id) {
     if (id === activeId) return;
     hardStop();
@@ -918,6 +987,7 @@ export default function App() {
   const [wchat, setWchat] = useState({ word: null, msgs: [], busy: false });
   const [selTip, setSelTip] = useState(null); // {x, y, text}
   const [ctxBusy, setCtxBusy] = useState(false); // 正在补「这句里的意思」
+  const [history, setHistory] = useState([]);    // 读过的文章，最近的在前
   /* 本章点了几个词。clickedRef 是 ref，改了不触发重渲染，所以另存一份 state：
      点词密度是每篇文章都有的难度信号，不像小测那样要你主动去做。 */
   const [clicks, setClicks] = useState(0);
@@ -958,6 +1028,8 @@ export default function App() {
           if (a.level) setLevel(a.level);
         }
       }
+      const hi = await sGet(HISTORY_KEY);
+      if (Array.isArray(hi)) setHistory(hi);
       const st = await sGet(STATS_KEY);
       if (st) {
         setStats({ log: {}, total: 0, lv: null, ...st });
@@ -1012,6 +1084,8 @@ export default function App() {
     if (!sSet(VOCAB_KEY, vocab)) showToast("生词没能存进浏览器——存储写满了，先关掉几篇长文档");
   }, [vocab, loaded]);
   useEffect(() => { if (loaded) sSet(STATS_KEY, stats); }, [stats, loaded]);
+  // 归档写失败不弹提示：丢的是"读过的"记录，不是用户的数据，提示了也没法处理
+  useEffect(() => { if (loaded) sSet(HISTORY_KEY, history); }, [history, loaded]);
   useEffect(() => {
     if (!loaded) return;
     if (!sSet(TABS_KEY, { tabs, activeId })) {
@@ -1063,6 +1137,16 @@ export default function App() {
       setLvHint({ dir: "down", to: LEVELS[idx - 1].id, label: LEVELS[idx - 1].label });
     }
   }, [clicks, curWords, level, article, lvHint]);
+
+  // 正开着的文章已经在「继续读」里了，不必在「读过的」再出现一次
+  const pastRead = useMemo(
+    () => history.filter((h) => !tabs.some((t) => t.id === h.id)),
+    [history, tabs]
+  );
+  const weekRead = useMemo(
+    () => pastRead.filter((h) => Date.now() - h.readAt < 7 * DAY).length,
+    [pastRead]
+  );
 
   const streak = useMemo(() => calcStreak(stats.log), [stats.log]);
   const dueList = useMemo(
@@ -1286,6 +1370,8 @@ export default function App() {
         );
       }
 
+      // 原地替换会把当前这篇彻底覆盖掉，先归档
+      if (!wantNewTab) archive(tabs.find((t) => t.id === activeId));
       const tabId = wantNewTab ? "t" + Date.now() : activeId;
       const art = {
         id: tabId,
@@ -2497,6 +2583,40 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                             <div className="cmeta">读到第 {(t.ch || 0) + 1} / {t.chapters.length} 章</div>
                           </>
                         )}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* 读过的文章。重读旧文比读新文更能巩固词汇——同一批词在同一个
+                  语境里再见一次。本周读过的单独标出来，呼应「周末复习本周」。 */}
+              {pastRead.length > 0 && (
+                <>
+                  <div className="sechead">
+                    <h2>读过的</h2>
+                    <span className="sec-sub">
+                      {weekRead > 0
+                        ? `本周读过 ${weekRead} 篇 · 重读一遍比读新的更能记住词`
+                        : "重读一遍比读新的更能记住词"}
+                    </span>
+                  </div>
+                  <div className="cardgrid">
+                    {pastRead.slice(0, 8).map((h) => (
+                      <button key={h.id} className="ccard" onClick={() => reread(h)}>
+                        <span className={h.srcUrl ? "ctag real" : h.imported ? "ctag" : "ctag ai"}>
+                          {h.srcUrl ? "真实来源" : h.imported ? "导入" : `AI · ${LEVELS.find((l) => l.id === h.level)?.label || "现写"}`}
+                        </span>
+                        <b>{h.title || "未命名"}</b>
+                        <p>
+                          {h.topic || "未分类"}
+                          {" · "}
+                          {countWords((h.chapters || []).join(" "))} 词
+                        </p>
+                        <div className="cmeta">
+                          {agoText(h.readAt)}
+                          {h.woven?.length ? ` · 织入过 ${h.woven.length} 个生词` : ""}
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -4123,6 +4243,7 @@ button:disabled{opacity:.55;cursor:default}
   margin:30px 0 13px;flex-wrap:wrap}
 .sechead h2{font-size:16px;font-weight:800}
 .sechead-r{display:flex;align-items:center;gap:8px}
+.sec-sub{font-size:12.5px;color:var(--mut)}
 .cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:13px}
 .ccard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;
   text-align:left;box-shadow:var(--sh);transition:border-color .15s,box-shadow .15s}
