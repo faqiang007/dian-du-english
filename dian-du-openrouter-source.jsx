@@ -42,7 +42,8 @@ import {
   Brain, BarChart3, Puzzle, ClipboardCheck,
   ChevronLeft, ChevronRight, RotateCcw, Turtle, Flame,
   Languages, Upload, Download, FileUp, ChevronDown, MoreHorizontal,
-  KeyRound, Settings, Bookmark, Menu, Globe, ExternalLink
+  KeyRound, Settings, Bookmark, Menu, Globe, ExternalLink,
+  MessagesSquare, Send, CornerDownLeft
 } from "lucide-react";
 import mammoth from "mammoth";
 
@@ -170,6 +171,17 @@ const MAX_TABS = 6;
    词在同一个语境里再见一次。所以关掉/替换时先归档。
    只留最近 HISTORY_MAX 篇、总量不超过 HISTORY_CHARS，超了丢最旧的；
    译文不归档（占地方且能随时重新生成）。 */
+/* 情景对话的场景。每个场景给 AI 一个明确的身份和目标，
+   比笼统地说"陪我练英语"有效得多——后者聊两句就变成互相寒暄。 */
+const SCENES = [
+  { id: "cafe", label: "咖啡店点单", icon: "☕", role: "咖啡店店员", goal: "让学习者完成点单：选饮品、说明规格、结账" },
+  { id: "job", label: "工作面试", icon: "💼", role: "面试官", goal: "问学习者的经历、优势和一个技术问题，追问细节" },
+  { id: "doctor", label: "看医生", icon: "🩺", role: "全科医生", goal: "问清症状、持续时间，给出建议" },
+  { id: "trip", label: "问路与出行", icon: "🧭", role: "热心的当地人", goal: "帮学习者找到目的地，说明换乘或步行路线" },
+  { id: "hotel", label: "酒店入住", icon: "🏨", role: "酒店前台", goal: "办理入住：确认预订、房型、早餐和退房时间" },
+  { id: "chat", label: "随便聊聊", icon: "💬", role: "同龄的外国朋友", goal: "从学习者的近况聊起，自然地把话题延续下去" },
+];
+
 const HISTORY_KEY = "dd-history-v1";
 const HISTORY_MAX = 20;
 const HISTORY_CHARS = 400000;
@@ -829,7 +841,7 @@ function dateStr(d = new Date()) {
 function calcStreak(log) {
   const active = (d) => {
     const e = log[dateStr(d)];
-    return e && (e.a || 0) + (e.q || 0) + (e.r || 0) > 0;
+    return e && (e.a || 0) + (e.q || 0) + (e.r || 0) + (e.t || 0) > 0;
   };
   let t = new Date(); t.setHours(0, 0, 0, 0);
   if (!active(t)) t = new Date(t.getTime() - DAY);
@@ -988,6 +1000,9 @@ export default function App() {
   const [selTip, setSelTip] = useState(null); // {x, y, text}
   const [ctxBusy, setCtxBusy] = useState(false); // 正在补「这句里的意思」
   const [history, setHistory] = useState([]);    // 读过的文章，最近的在前
+  /* 情景对话。scene=null 时显示场景选择；msgs 里 role 为 u/a，
+     a 消息附 fix（更地道的说法）和 used（这轮用上的生词）。 */
+  const [talk, setTalk] = useState({ scene: null, msgs: [], busy: false, draft: "" });
   /* 本章点了几个词。clickedRef 是 ref，改了不触发重渲染，所以另存一份 state：
      点词密度是每篇文章都有的难度信号，不像小测那样要你主动去做。 */
   const [clicks, setClicks] = useState(0);
@@ -1657,6 +1672,74 @@ words 按相关度最多给 5 个；如果回答里没有值得收藏的词就�
     showToast(`已收藏 ${cw.w}`);
   }
 
+  /* ---- 情景对话 ---- */
+
+  function startTalk(scene) {
+    setTalk({ scene, msgs: [], busy: false, draft: "" });
+    sendTalk("", scene, []); // 空输入触发开场白，由 AI 先说第一句
+  }
+  function exitTalk() {
+    setTalk({ scene: null, msgs: [], busy: false, draft: "" });
+  }
+
+  async function sendTalk(text, sceneArg, msgsArg) {
+    const scene = sceneArg || talk.scene;
+    if (!scene || talk.busy) return;
+    const said = (text || "").trim();
+    const base = msgsArg || talk.msgs;
+    const msgs = said ? [...base, { role: "u", t: said }] : base;
+    setTalk((s) => ({ ...s, msgs, busy: true, draft: "" }));
+
+    const lv = LEVELS.find((l) => l.id === level) || LEVELS[1];
+    /* 让对话吃生词本里到期的词：这次改的每一处都是把断掉的信号接回去，
+       对话练习也该用你正在复习的词，而不是另起一套词汇。 */
+    const want = dueList.slice(0, 6).map((v) => weaveTermOf(v)).filter(Boolean);
+    const wantLine = want.length
+      ? `\n学习者正在复习这些词，如果自然的话请在你的话里用上一两个（不要硬塞、不要一次全用）：${want.join(", ")}。`
+      : "";
+    const historyLine = msgs
+      .map((m) => (m.role === "u" ? "学习者说：" : "你说：") + m.t)
+      .join("\n");
+
+    const prompt = `你在和一位中国英语学习者做情景对话练习。你扮演${scene.role}，目标是${scene.goal}。
+学习者的英语水平：${lv.tag}（CEFR ${lv.id}），你说的英语要贴着这个水平，别超纲。${wantLine}
+
+${historyLine ? `目前的对话：\n${historyLine}` : "对话还没开始，请你说第一句，把场景自然地带起来。"}
+
+规则：
+- 你的回复要短，1-3 句，像真人说话，不要长篇大论
+- 每次都要把对话往前推进（提问、给选项、要求确认），不要只是附和
+- 学习者说得不地道时，不要打断对话去纠正，把改进版放进 fix 字段
+
+只返回 JSON，不要任何其他文字或 markdown 代码块：
+{"say":"你这轮说的英文","say_cn":"这句的中文翻译","fix":${said ? '"学习者上一句更地道的英文说法；本来就没问题就填 null"' : "null"},"fix_why":${said ? '"用一句中文说明改了什么；fix 为 null 时也填 null"' : "null"},"used":["你这轮实际用上的复习词，没有就空数组"]}`;
+
+    try {
+      const data = await callClaude(prompt, apiKey, model, null, providerId);
+      if (!data.say) throw new Error("bad");
+      setTalk((s) => ({
+        ...s, busy: false,
+        msgs: [...msgs, {
+          role: "a", t: data.say, cn: data.say_cn || "",
+          fix: data.fix || "", why: data.fix_why || "",
+          used: Array.isArray(data.used) ? data.used : [],
+        }],
+      }));
+      // 对话里真的用上的复习词，按"又见了一面"记一次
+      const used = new Set((Array.isArray(data.used) ? data.used : []).map((w) => String(w).toLowerCase()));
+      if (used.size) {
+        setVocab((vs) => vs.map((v) => {
+          const t = weaveTermOf(v).toLowerCase();
+          return t && used.has(t) ? { ...v, meet: (v.meet || 1) + 1 } : v;
+        }));
+      }
+      bumpStat("t");
+    } catch (e) {
+      setTalk((s) => ({ ...s, busy: false }));
+      showToast(errText(e, providerId));
+    }
+  }
+
   /* ---- 整句解析 ---- */
   async function analyzeSentence(sentence) {
     const s = (sentence || "").trim();
@@ -2228,6 +2311,9 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
             <RotateCcw size={16} /> 复习
             {dueList.length > 0 && <span className="sbadge hot">{dueList.length}</span>}
           </button>
+          <button className={view === "talk" ? "sl on" : "sl"} onClick={() => go("talk")}>
+            <MessagesSquare size={16} /> 对话
+          </button>
           <button className={view === "stats" ? "sl on" : "sl"} onClick={() => go("stats")}>
             <BarChart3 size={16} /> 统计
           </button>
@@ -2304,6 +2390,17 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               onAnswer={answerReview}
               onExit={() => setView("vocab")}
               onRead={() => { setView("read"); openBlankTab(); }}
+            />
+          ) : view === "talk" ? (
+            <TalkView
+              talk={talk}
+              dueCount={dueList.length}
+              level={LEVELS.find((l) => l.id === level)}
+              onStart={startTalk}
+              onSend={sendTalk}
+              onExit={exitTalk}
+              onSetDraft={(v) => setTalk((s) => ({ ...s, draft: v }))}
+              onSpeak={speak}
             />
           ) : view === "stats" ? (
             <StatsView
@@ -3656,6 +3753,93 @@ function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onExit, onRead }) {
 
 /* ---------- 统计面板 ---------- */
 
+/* ---------- 情景对话 ---------- */
+
+function TalkView({ talk, dueCount, level, onStart, onSend, onExit, onSetDraft, onSpeak }) {
+  const endRef = useRef(null);
+  useEffect(() => {
+    if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [talk.msgs.length, talk.busy]);
+
+  if (!talk.scene) {
+    return (
+      <div className="talk">
+        <h2 className="vb-t"><MessagesSquare size={19} /> 情景对话</h2>
+        <p className="vb-sub">
+          挑个场景，AI 扮演对方跟你一来一回。你说得不地道时它不会打断，
+          会在回复下面给一句更自然的说法。
+          {dueCount > 0 && <> 它还会顺手用上你今天要复习的词。</>}
+        </p>
+        <div className="scenes">
+          {SCENES.map((s) => (
+            <button key={s.id} className="scene" onClick={() => onStart(s)}>
+              <span className="scene-i">{s.icon}</span>
+              <b>{s.label}</b>
+              <span className="scene-r">AI 扮演{s.role}</span>
+            </button>
+          ))}
+        </div>
+        <p className="talk-note">
+          按你当前的难度「{level?.label || "基础"}」说话，不会超纲。练完随时能换场景。
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="talk">
+      <div className="talk-head">
+        <span className="talk-scene">{talk.scene.icon} {talk.scene.label}</span>
+        <button className="btn-gh small" onClick={onExit}><X size={14} /> 换个场景</button>
+      </div>
+
+      <div className="talk-body">
+        {talk.msgs.map((m, i) => (
+          m.role === "u" ? (
+            <div className="bub u" key={i}>{m.t}</div>
+          ) : (
+            <div className="bub-wrap" key={i}>
+              <div className="bub a">
+                {m.t}
+                <button className="bub-sp" onClick={() => onSpeak(m.t, "en-US", 0.95)} aria-label="朗读">
+                  <Volume2 size={13} />
+                </button>
+              </div>
+              {m.cn && <div className="bub-cn">{m.cn}</div>}
+              {m.used?.length > 0 && (
+                <div className="bub-used">用到你在复习的：{m.used.join(" · ")}</div>
+              )}
+              {m.fix && (
+                <div className="fix">
+                  <span className="fix-l">更地道</span>
+                  <b>{m.fix}</b>
+                  {m.why && <span className="fix-why">{m.why}</span>}
+                </div>
+              )}
+            </div>
+          )
+        ))}
+        {talk.busy && <div className="bub a busy"><Loader2 size={14} className="spin" /> 正在想…</div>}
+        <div ref={endRef} />
+      </div>
+
+      <div className="talk-in">
+        <input
+          value={talk.draft}
+          onChange={(e) => onSetDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) onSend(talk.draft); }}
+          placeholder="用英文回他一句…"
+          disabled={talk.busy}
+        />
+        <button className="btn-pri small" onClick={() => onSend(talk.draft)} disabled={talk.busy || !talk.draft.trim()}>
+          <Send size={15} /> 发送
+        </button>
+      </div>
+      <p className="talk-note"><CornerDownLeft size={12} /> 回车发送。说错不要紧，改进版会跟在它的回复下面。</p>
+    </div>
+  );
+}
+
 function StatsView({ stats, streak, vocab = [], vocabCount, dueCount, level, onGoReview }) {
   const days = [];
   for (let i = 13; i >= 0; i--) {
@@ -3663,7 +3847,7 @@ function StatsView({ stats, streak, vocab = [], vocabCount, dueCount, level, onG
     const e = stats.log[dateStr(d)] || {};
     days.push({
       label: d.getDate(),
-      val: (e.a || 0) + (e.q || 0) + (e.r || 0),
+      val: (e.a || 0) + (e.q || 0) + (e.r || 0) + (e.t || 0),
       m: typeof e.m === "number" ? e.m : null,
       today: i === 0,
     });
@@ -3719,7 +3903,7 @@ function StatsView({ stats, streak, vocab = [], vocabCount, dueCount, level, onG
           </div>
 
           <div className="st-chart">
-            <div className="sec-l">最近 14 天活跃（读文 + 小测 + 复习）</div>
+            <div className="sec-l">最近 14 天活跃（读文 + 小测 + 复习 + 对话）</div>
             <div className="bars">
               {days.map((d, i) => (
                 <div className="barcol" key={i} title={`${d.label}日：${d.val} 次`}>
@@ -4491,6 +4675,41 @@ button:disabled{opacity:.55;cursor:default}
 .st-n{font-size:25px;font-weight:800;letter-spacing:-.5px;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--ink)}
 .st-n svg{color:#E0862B}
 .st-l{display:block;margin-top:4px;font-size:12.5px;color:var(--mut)}
+/* ---- 情景对话 ---- */
+.talk{max-width:760px;margin:0 auto;padding-bottom:20px}
+.scenes{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-top:20px}
+.scene{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;
+  text-align:left;box-shadow:var(--sh);transition:border-color .15s,box-shadow .15s}
+.scene:hover{border-color:var(--blue);box-shadow:var(--sh-l)}
+.scene-i{font-size:24px;display:block;margin-bottom:8px}
+.scene b{display:block;font-size:15px}
+.scene-r{display:block;margin-top:4px;font-size:12px;color:var(--mut)}
+.talk-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding-bottom:12px;border-bottom:1px solid var(--line)}
+.talk-scene{font-size:16px;font-weight:800}
+.talk-body{display:flex;flex-direction:column;gap:14px;padding:18px 0;min-height:220px}
+.bub-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:5px;max-width:88%}
+.bub{border-radius:13px;padding:10px 13px;font-size:15px;line-height:1.62;max-width:88%}
+/* 气泡和标签的文字都用 var(--card) 而非 #fff：--blue/--ok 在夜间主题是
+   亮色，白字压上去对比度不足；--card 在每套主题里都与它们深浅相反。 */
+.bub.u{align-self:flex-end;background:var(--blue);color:var(--card);border-bottom-right-radius:4px}
+.bub.a{background:var(--card);border:1px solid var(--line);color:var(--ink);
+  border-bottom-left-radius:4px;box-shadow:var(--sh)}
+.bub.busy{display:inline-flex;align-items:center;gap:7px;color:var(--mut);font-size:13.5px}
+.bub-sp{margin-left:7px;color:var(--mut);vertical-align:middle}
+.bub-sp:hover{color:var(--blue)}
+.bub-cn{font-size:12.5px;color:var(--mut);padding-left:3px}
+.bub-used{font-size:11.5px;color:var(--ok);font-weight:700;padding-left:3px}
+.fix{background:var(--ok-bg);border-radius:10px;padding:8px 11px;font-size:13.5px;line-height:1.6}
+.fix-l{display:inline-block;font-size:11px;font-weight:800;color:var(--card);background:var(--ok);
+  border-radius:5px;padding:1px 6px;margin-right:7px}
+.fix-why{display:block;margin-top:3px;font-size:12px;color:var(--ink2);font-weight:400}
+.talk-in{display:flex;gap:9px;align-items:center;border-top:1px solid var(--line);padding-top:14px}
+.talk-in input{flex:1;background:var(--card);border:1px solid var(--line);border-radius:11px;
+  padding:11px 13px;font-size:15px;color:var(--ink)}
+.talk-in input:focus{border-color:var(--blue)}
+.talk-note{display:flex;align-items:center;gap:5px;margin-top:10px;font-size:11.5px;color:var(--mut)}
+
 .lvhint{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
   margin-bottom:12px;border-radius:11px;padding:9px 10px 9px 13px;font-size:13px;font-weight:600}
 .lvhint.hard{background:var(--hi-wash);border:1px solid var(--hi-soft);color:var(--hi-text)}
