@@ -1108,8 +1108,16 @@ export default function App() {
   async function generateArticle(t, lvId, opts) {
     const theTopic = (t ?? topic).trim();
     const theLevel = lvId ?? level;
-    if (!theTopic) { showToast("先输入一个主题吧"); return; }
     if (genLoading) return;
+    // 织哪些词由首页「AI 现写」卡决定，这里只管用
+    const weave = weaveOn ? weavePicked : [];
+
+    // 主题可以留空——那就让模型照着生词自己找情境，硬填主题写出来反而生硬。
+    // 但两者不能都空：没主题又没词，模型只会翻来覆去写那几个万金油话题。
+    if (!theTopic && !weave.length) {
+      showToast("写个主题，或者打开生词复习选几个词");
+      return;
+    }
     const wantNewTab = !!(opts && opts.newTab) || !activeId;
     if (wantNewTab && !canOpenNewTab()) return;
     hardStop();
@@ -1117,14 +1125,15 @@ export default function App() {
     setGenError("");
     const lv = LEVELS.find((l) => l.id === theLevel);
 
-    // 织哪些词由首页「AI 现写」卡决定，这里只管用
-    const weave = weaveOn ? weavePicked : [];
-
     const weaveLine = weave.length
       ? `\n- 请自然地用上这些单词（是学习者的生词，帮 TA 复习）：${weave.join(", ")}。个别词若与该难度实在不符可省略，切勿生硬堆砌`
       : "";
 
-    const prompt = `你是一位专业的英语分级阅读内容作者。请以主题「${theTopic}」为内容，写一篇 ${lv.tag}（CEFR ${lv.id}）水平的英语短文。
+    const openLine = theTopic
+      ? `请以主题「${theTopic}」为内容，写一篇 ${lv.tag}（CEFR ${lv.id}）水平的英语短文。`
+      : `请写一篇 ${lv.tag}（CEFR ${lv.id}）水平的英语短文，主题由你来定——围绕下面那些生词，自己想一个能把它们自然串起来的真实情境。挑话题时以"哪种情境用得上这些词"为准，不要为了凑词而选一个牵强的话题；成文要像一篇正经文章，不能像单词练习。`;
+
+    const prompt = `你是一位专业的英语分级阅读内容作者。${openLine}
 
 严格要求：
 - 长度约 ${lv.words} 词，分 2-4 段
@@ -1136,7 +1145,7 @@ export default function App() {
 - 标题简洁吸引人${weaveLine}
 
 只返回 JSON，不要任何其他文字、解释或 markdown 代码块：
-{"title":"英文标题","content":"英文正文，段落之间用\\n\\n分隔","cn_intro":"一句话中文导读，25字以内"}`;
+{"title":"英文标题","content":"英文正文，段落之间用\\n\\n分隔","cn_intro":"一句话中文导读，25字以内","topic_cn":"本文话题的中文短标签，4-10字，如「桥梁工程」「城市里的鸟」"}`;
 
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
@@ -1162,7 +1171,10 @@ export default function App() {
         title: data.title,
         chapters: [data.content], ch: 0, trans: {},
         cn_intro: data.cn_intro || "",
-        topic: theTopic,
+        // 没填主题时用模型自报的话题标签，界面上「继续读」卡片、文章出处那几处
+        // 才不会露出空白；autoTopic 记着这篇本来是不限主题的，重写时不锁死话题
+        topic: theTopic || (data.topic_cn || "").trim() || "生词复习",
+        autoTopic: !theTopic,
         level: theLevel,
         woven,
       };
@@ -1263,6 +1275,12 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
     } catch (e) {
       setDict({ status: "error", term: q, key, sent: sentence, msg: errText(e, providerId) });
     }
+  }
+
+  /* 重新生成某篇文章时该沿用什么主题。不限主题写出来的那篇，重写时依旧
+     不限主题——它的 topic 只是模型自报的标签，拿它去重写等于把话题锁死了。 */
+  function reTopicOf(a) {
+    return a && a.autoTopic ? "" : a && a.topic;
   }
 
   function retryLookup() {
@@ -2143,7 +2161,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") generateArticle(); }}
-                    placeholder="想读什么？比如：悬索桥是怎么建起来的"
+                    placeholder="想读什么？留空则由 AI 照着你选的生词自己定"
                   />
                 </div>
 
@@ -2198,7 +2216,11 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                     <Sparkles size={16} /> 让 AI 现写一篇
                   </button>
                   <span className="ai-hint">
-                    {topic.trim() ? "" : "先在上面写个主题，或点下面的话题卡"}
+                    {topic.trim()
+                      ? ""
+                      : weaveOn && weavePicked.length
+                        ? `不限主题，AI 会围绕这 ${weavePicked.length} 个生词找个合适的情境`
+                        : "写个主题，或者打开上面的「复习生词」选几个词"}
                   </span>
                 </div>
               </div>
@@ -2290,14 +2312,14 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                     : <><ClipboardCheck size={14} /> 做小测</>}
                 </button>
                 {!article?.imported && (
-                  <button className="btn-gh" onClick={() => generateArticle(article.topic)} disabled={genLoading}>
+                  <button className="btn-gh" onClick={() => generateArticle(reTopicOf(article))} disabled={genLoading}>
                     <RefreshCw size={14} /> 换一篇
                   </button>
                 )}
               </div>
 
               {genLoading ? (
-                <Skeleton topic={topic || article?.topic} />
+                <Skeleton topic={topic || reTopicOf(article)} />
               ) : (
                 <>
                   <div className="art-meta">
@@ -2336,7 +2358,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                                   <button
                                     key={l.id}
                                     className={l.id === article.level ? "mi on" : "mi"}
-                                    onClick={() => { setLvMenu(false); generateArticle(article.topic, l.id); }}
+                                    onClick={() => { setLvMenu(false); generateArticle(reTopicOf(article), l.id); }}
                                   >
                                     <span>{l.label}</span>
                                     <span className="mi-tag">{l.tag}</span>
@@ -2353,7 +2375,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                         <span className="dotsep">·</span>主题「{article.topic}」
                         <span className="dotsep">·</span>
                         <button className="meta-btn"
-                          onClick={() => generateArticle(article.topic, article.level, { newTab: true })}
+                          onClick={() => generateArticle(reTopicOf(article), article.level, { newTab: true })}
                           disabled={genLoading}
                         >
                           <Copy size={12} /> 对比一篇
@@ -2440,14 +2462,14 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                   )}
                   {(quiz.st === "on" || quiz.st === "done") && (
                     <QuizBlock quiz={quiz} onPick={pickOption} onNext={nextQuestion}
-                      onRetryArticle={() => generateArticle(article?.topic)} />
+                      onRetryArticle={() => generateArticle(reTopicOf(article))} />
                   )}
 
                 </>
               )}
               {genError && (
                 <div className="err">
-                  {genError} <button className="lnk" onClick={() => generateArticle(article?.topic)}>重试</button>
+                  {genError} <button className="lnk" onClick={() => generateArticle(reTopicOf(article))}>重试</button>
                 </div>
               )}
             </div>
@@ -3572,7 +3594,10 @@ function Skeleton({ topic }) {
   return (
     <div className="skel">
       <div className="skel-note">
-        <Loader2 size={15} className="spin" /> 正在为你现写一篇「{topic}」…
+        <Loader2 size={15} className="spin" />{" "}
+        {topic && topic.trim()
+          ? <>正在为你现写一篇「{topic.trim()}」…</>
+          : <>正在照着你的生词现写一篇…</>}
       </div>
       <div className="sk sk-t" />
       <div className="sk" /><div className="sk" /><div className="sk w80" />
