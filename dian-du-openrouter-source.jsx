@@ -1222,8 +1222,10 @@ export default function App() {
     const theTopic = (t ?? topic).trim();
     const theLevel = lvId ?? level;
     if (genLoading) return;
-    // 织哪些词由首页「AI 现写」卡决定，这里只管用
-    const weave = weaveOn ? weavePicked : [];
+    /* 织哪些词由首页「AI 现写」卡决定，这里只管用。
+       opts.weave 是给「今天」那条主线用的：它同一轮里刚 setWeaveOn(true)，
+       而 state 要下一轮才更新，读 weaveOn 会读到旧的 false。 */
+    const weave = (opts && opts.weave) || (weaveOn ? weavePicked : []);
 
     // 主题可以留空——那就让模型照着生词自己找情境，硬填主题写出来反而生硬。
     // 但两者不能都空：没主题又没词，模型只会翻来覆去写那几个万金油话题。
@@ -2274,6 +2276,40 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
             <div className="home">
               <h1 className="home-t">今天想读点什么？</h1>
               <p className="home-sub">让 AI 按你的难度和生词现写一篇，或者导入自己的材料；想读有出处的真实文章，点下面的话题卡。</p>
+
+              {/* 当日主线：先给一个默认动作。下面三块（现写／继续读／话题卡）
+                  都在喊"从我这儿开始"，每次打开都要重新决策一遍，累的是人。
+                  有到期的词就先复习，否则接着上次读。 */}
+              {(dueList.length > 0 || article) && (
+                <div className="today">
+                  <div className="today-l">
+                    <span className="today-tag">今天</span>
+                    {dueList.length > 0
+                      ? <b>{dueList.length} 个词到期了</b>
+                      : <b>接着读《{article.title}》{(article.chapters || []).length > 1 ? ` 第 ${(article.ch || 0) + 1} 章` : ""}</b>}
+                  </div>
+                  <div className="today-a">
+                    {dueList.length > 0 ? (
+                      <>
+                        <button className="btn-pri small" onClick={startReview}>
+                          <Brain size={15} /> 复习 {dueList.length} 个词
+                        </button>
+                        {weaveCands.length > 0 && (
+                          <button className="btn-gh small"
+                            onClick={() => { setWeaveOn(true); setTopic(""); generateArticle("", null, { weave: weavePicked }); }}
+                            disabled={genLoading}>
+                            <Sparkles size={15} /> 读一篇织入它们的文章
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <button className="btn-pri small" onClick={() => setView("read")}>
+                        <BookOpen size={15} /> 继续读
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="genbox">
               {!providerOf(providerId).webSearch && (
@@ -4010,6 +4046,13 @@ button:disabled{opacity:.55;cursor:default}
 .home{padding-top:4px}
 .home-t{font-size:28px;font-weight:800;letter-spacing:-.3px}
 .home-sub{color:var(--ink2);font-size:14.5px;margin-top:7px}
+.today{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  margin-top:18px;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--blue);
+  border-radius:12px;padding:13px 15px;box-shadow:var(--sh)}
+.today-l{display:flex;align-items:center;gap:9px;font-size:15px;color:var(--ink)}
+.today-tag{flex:none;font-size:11px;font-weight:800;color:var(--blue);background:var(--blue-bg);
+  border-radius:6px;padding:2px 7px}
+.today-a{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .genbox{background:var(--card);border:1px solid var(--line);border-radius:15px;
   padding:10px 20px;margin-top:20px;box-shadow:var(--sh)}
 /* 展开导入面板、或有服务商提示条时才恢复正常内边距 */
@@ -4022,6 +4065,7 @@ button:disabled{opacity:.55;cursor:default}
   font-size:14.5px;font-weight:700;padding:12px 24px;border-radius:10px}
 .btn-pri:hover{background:var(--blue-d)}
 .btn-pri.small{font-size:13px;padding:9px 16px}
+.btn-gh.small{font-size:13px;padding:8px 13px}
 .genfoot{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .genwarn + .genfoot{margin-top:12px}
 .lvt{font-size:13px;padding:6px 13px;border-radius:8px;border:1px solid var(--line);
