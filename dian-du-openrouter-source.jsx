@@ -508,6 +508,35 @@ function errText(e, providerId) {
   }
 }
 
+/* ---- 词级词典缓存 ----
+   只存单词条目本身（释义/音标/例句），不存语境。上限 DICT_CACHE_MAX 条，
+   超了丢最早写入的那批——词典条目丢了只是下次重查一次，不是数据损失，
+   所以这里不跟生词本抢 localStorage 配额。 */
+const DICT_CACHE_KEY = "dd-dict-cache-v1";
+const DICT_CACHE_MAX = 400;
+
+function stripCtx(d) {
+  return d && d.context_cn ? { ...d, context_cn: null } : d;
+}
+/* 生词本里的条目来源不一：查词存的是完整词条，从单词问答收藏的、
+   Markdown 导入的可能只有一条释义没音标没例句。拿这种「瘦身版」顶替
+   一次真查询，用户会永远看到残缺的卡片——所以只有完整的才配当缓存用。 */
+function isFullEntry(d) {
+  if (!d) return false;
+  if (d.type === "en") return !!d.phonetic_us && (d.senses || []).length > 0 && (d.examples || []).length > 0;
+  if (d.type === "zh") return (d.translations || []).length > 0 && (d.examples || []).length > 0;
+  return false;
+}
+function loadDictCache() {
+  const raw = sGet(DICT_CACHE_KEY);
+  return new Map(Array.isArray(raw) ? raw : []);
+}
+function saveDictCache(map) {
+  let entries = [...map.entries()];
+  if (entries.length > DICT_CACHE_MAX) entries = entries.slice(-DICT_CACHE_MAX);
+  sSet(DICT_CACHE_KEY, entries);
+}
+
 function sGet(key) {
   try {
     const v = localStorage.getItem(key);
@@ -856,8 +885,13 @@ export default function App() {
   const [readIdx, setReadIdx] = useState(-1);
   const [wchat, setWchat] = useState({ word: null, msgs: [], busy: false });
   const [selTip, setSelTip] = useState(null); // {x, y, text}
+  const [ctxBusy, setCtxBusy] = useState(false); // 正在补「这句里的意思」
 
   const cacheRef = useRef(new Map());
+  /* 词级词典缓存，落地 localStorage。cacheRef 的键带句子，换篇文章就失效，
+     且刷新即清空——同一个词反复花钱查。这份只按单词存，跨文章跨会话都能命中。
+     存进来的条目一律剥掉 context_cn：那是针对某一句的解释，套到别的句子上会误导。 */
+  const dictCacheRef = useRef(loadDictCache());
   const readRef = useRef({ on: false });
   const lastLookupRef = useRef(null);
   const lastWordRef = useRef(null);   // 从整句解析返回单词卡
@@ -1243,7 +1277,7 @@ export default function App() {
     if (/^[a-zA-Z]/.test(q)) clickedRef.current.add(q.toLowerCase());
 
     const cacheKey = q.toLowerCase() + "||" + (sentence || "");
-    const finish = (data) => {
+    const finish = (data, local) => {
       const lemma = (data.word || data.input || q).toLowerCase();
       const hit = vocab.find(
         (v) =>
@@ -1253,7 +1287,12 @@ export default function App() {
       );
       const next = {
         status: "ok", term: q, key, sent: sentence, data,
-        meta: hit ? { saved: true, meet: hit.meet || 1 } : null,
+        meta: {
+          saved: !!hit,
+          meet: hit ? hit.meet || 1 : 0,
+          // local=true 表示这条没花 API，界面据此提供「补一条语境」的入口
+          local: !!local,
+        },
       };
       setDict(next);
       if (data.type === "en" || data.type === "zh") lastWordRef.current = next;
@@ -1264,6 +1303,20 @@ export default function App() {
 
     if (cacheRef.current.has(cacheKey)) {
       finish(cacheRef.current.get(cacheKey));
+      return;
+    }
+
+    /* 本地先行：生词本 > 词级缓存。命中就秒开，不调 API 也不花钱。
+       生词本里存的就是完整词条，以前却从不读它——收藏过的词再点一次
+       照样去问模型，这是纯浪费。 */
+    const ql = q.toLowerCase();
+    const localHit =
+      [
+        vocab.find((v) => v.key === ql || (v.surface || "").toLowerCase() === ql)?.data,
+        dictCacheRef.current.get(ql),
+      ].find(isFullEntry);
+    if (localHit) {
+      finish(stripCtx(localHit), true);
       return;
     }
     const isZh = /[\u4e00-\u9fff]/.test(q);
@@ -1289,6 +1342,12 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
       const data = await callClaude(prompt, apiKey, model, null, providerId);
       if (!data.type) throw new Error("bad");
       cacheRef.current.set(cacheKey, data);
+      // 按词原形和用户点的形态各存一份：点 running 下次直接命中，
+      // 点 run 也命中同一条，省得同一个词的不同变形各查一次
+      const lemma = (data.word || data.input || q).toLowerCase();
+      dictCacheRef.current.set(ql, stripCtx(data));
+      if (lemma && lemma !== ql) dictCacheRef.current.set(lemma, stripCtx(data));
+      saveDictCache(dictCacheRef.current);
       finish(data);
     } catch (e) {
       setDict({ status: "error", term: q, key, sent: sentence, msg: errText(e, providerId) });
@@ -1299,6 +1358,30 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
      不限主题——它的 topic 只是模型自报的标签，拿它去重写等于把话题锁死了。 */
   function reTopicOf(a) {
     return a && a.autoTopic ? "" : a && a.topic;
+  }
+
+  /* 本地命中的词条没有「这句里什么意思」——那条跟着句子走，不能拿别句的顶替。
+     多数时候有释义就够了，所以做成按需：想看再点，点了才花这一次调用。 */
+  async function fetchContext() {
+    const d = dict.data;
+    if (!d || dict.status !== "ok" || !dict.sent || ctxBusy) return;
+    setCtxBusy(true);
+    try {
+      const data = await callClaude(
+        `单词「${dict.term}」出现在这句话里："${dict.sent}"
+
+只返回 JSON，不要任何其他文字或 markdown 代码块：
+{"context_cn":"该词在这句话中的准确中文含义，一句话说清"}`,
+        apiKey, model, null, providerId
+      );
+      if (data.context_cn) {
+        setDict((x) => (x.status === "ok" ? { ...x, data: { ...x.data, context_cn: data.context_cn } } : x));
+      }
+    } catch (e) {
+      showToast(errText(e, providerId));
+    } finally {
+      setCtxBusy(false);
+    }
   }
 
   function retryLookup() {
@@ -2553,6 +2636,8 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                   onSpeak={speak}
                   saved={dictIsSaved}
                   onSave={saveCurrent}
+                  onCtx={fetchContext}
+                  ctxBusy={ctxBusy}
                 />
                 <WordChat
                   word={wchat.word}
@@ -2816,7 +2901,7 @@ function ArticleBody({ content, trans, showTrans, onWord, activeKey, savedSurfac
 
 /* ---------- 词典卡片：英→中 ---------- */
 
-function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave }) {
+function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave, onCtx, ctxBusy }) {
   return (
     <div className="card">
       {meta?.saved && (
@@ -2846,6 +2931,16 @@ function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave }) {
           <span className="ctx-l">语境</span>
           {d.context_cn}
         </div>
+      )}
+
+      {/* 词条来自本地（生词本或缓存），没花 API，也就没有这句话的语境。
+          想看就点，点了才发一次请求。 */}
+      {!d.context_cn && sent && meta?.local && (
+        <button className="ctxbtn" onClick={onCtx} disabled={ctxBusy}>
+          {ctxBusy
+            ? <><Loader2 size={13} className="spin" /> 正在看这句…</>
+            : <><Sparkles size={13} /> 看它在这句里是什么意思</>}
+        </button>
       )}
 
       {sent && (
@@ -3943,6 +4038,10 @@ button:disabled{opacity:.55;cursor:default}
    白字压上去只有 2.6:1 糊成一片；--card 在每套主题里都跟 --blue 深浅相反。 */
 .ctx.tech{background:var(--blue-bg);border-color:var(--blue-bg)}
 .ctx-l.tech-l{color:var(--card);background:var(--blue)}
+.ctxbtn{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12.5px;
+  color:var(--ink2);border:1px dashed var(--line);border-radius:9px;padding:6px 11px;background:transparent}
+.ctxbtn:hover:not(:disabled){color:var(--blue);border-color:var(--blue)}
+.ctxbtn:disabled{opacity:.6}
 .sentbtn{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;
   color:var(--blue);border:1px dashed var(--blue);border-radius:9px;padding:6px 12px;background:var(--blue-bg)}
 .sentbtn:hover{background:var(--card)}
