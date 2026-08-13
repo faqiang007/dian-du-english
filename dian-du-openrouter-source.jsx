@@ -997,6 +997,11 @@ export default function App() {
     window.scrollTo({ top: 0 });
   }
 
+  function removeHistory(id) {
+    setHistory((hs) => hs.filter((h) => h.id !== id));
+    showToast("已从「读过的」移除");
+  }
+
   function switchTab(id) {
     if (id === activeId) return;
     hardStop();
@@ -2764,21 +2769,29 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                   </div>
                   <div className="cardgrid">
                     {pastRead.slice(0, 8).map((h) => (
-                      <button key={h.id} className="ccard" onClick={() => reread(h)}>
-                        <span className={h.srcUrl ? "ctag real" : h.imported ? "ctag" : "ctag ai"}>
-                          {h.srcUrl ? "真实来源" : h.imported ? "导入" : `AI · ${LEVELS.find((l) => l.id === h.level)?.label || "现写"}`}
-                        </span>
-                        <b>{h.title || "未命名"}</b>
-                        <p>
-                          {h.topic || "未分类"}
-                          {" · "}
-                          {countWords((h.chapters || []).join(" "))} 词
-                        </p>
-                        <div className="cmeta">
-                          {agoText(h.readAt)}
-                          {h.woven?.length ? ` · 织入过 ${h.woven.length} 个生词` : ""}
-                        </div>
-                      </button>
+                      // 卡片本身是 button，删除键不能嵌在里面（按钮套按钮非法），
+                      // 所以外面包一层定位容器
+                      <div className="ccard-wrap" key={h.id}>
+                        <button className="ccard" onClick={() => reread(h)}>
+                          <span className={h.srcUrl ? "ctag real" : h.imported ? "ctag" : "ctag ai"}>
+                            {h.srcUrl ? "真实来源" : h.imported ? "导入" : `AI · ${LEVELS.find((l) => l.id === h.level)?.label || "现写"}`}
+                          </span>
+                          <b>{h.title || "未命名"}</b>
+                          <p>
+                            {h.topic || "未分类"}
+                            {" · "}
+                            {countWords((h.chapters || []).join(" "))} 词
+                          </p>
+                          <div className="cmeta">
+                            {agoText(h.readAt)}
+                            {h.woven?.length ? ` · 织入过 ${h.woven.length} 个生词` : ""}
+                          </div>
+                        </button>
+                        <button className="ccard-x" onClick={() => removeHistory(h.id)}
+                          aria-label={`从「读过的」移除《${h.title || "未命名"}》`} title="移除">
+                          <X size={13} />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </>
@@ -4496,6 +4509,15 @@ button:disabled{opacity:.55;cursor:default}
 .ccard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;
   text-align:left;box-shadow:var(--sh);transition:border-color .15s,box-shadow .15s}
 .ccard:hover{border-color:var(--blue);box-shadow:var(--sh-l)}
+/* 卡片是网格项，包一层后要让它撑满，否则会缩成内容宽度 */
+.ccard-wrap{position:relative;display:flex}
+.ccard-wrap .ccard{flex:1;min-width:0}
+.ccard-x{position:absolute;top:8px;right:8px;color:var(--mut);border-radius:7px;padding:4px;
+  opacity:0;transition:opacity .15s,color .15s,background .15s}
+.ccard-wrap:hover .ccard-x{opacity:1}
+.ccard-x:hover{color:var(--bad);background:var(--bad-bg)}
+/* 触屏没有 hover，删除键得一直显示，否则根本点不到 */
+@media (hover:none){.ccard-x{opacity:1}}
 .ccard .ctag{font-size:11px;font-weight:700;color:var(--blue);background:var(--blue-bg);
   border-radius:6px;padding:2px 8px;display:inline-block;margin-bottom:9px}
 .ccard b{display:block;font-size:14.5px;font-weight:700;line-height:1.45}
