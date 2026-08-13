@@ -9,10 +9,11 @@
     "build": "node build.mjs"
   },
   "dependencies": {
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
+    "fflate": "^0.8.3",
     "lucide-react": "0.383.0",
-    "mammoth": "^1.8.0"
+    "mammoth": "^1.8.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   },
   "devDependencies": {
     "esbuild": "^0.23.0"
