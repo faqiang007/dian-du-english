@@ -839,6 +839,8 @@ export default function App() {
     setQuiz({ st: "idle" });
     setShowTrans(false);
     clickedRef.current = new Set();
+    setClicks(0);
+    setLvHint(null);
     window.scrollTo({ top: 0 });
   }
 
@@ -916,6 +918,10 @@ export default function App() {
   const [wchat, setWchat] = useState({ word: null, msgs: [], busy: false });
   const [selTip, setSelTip] = useState(null); // {x, y, text}
   const [ctxBusy, setCtxBusy] = useState(false); // 正在补「这句里的意思」
+  /* 本章点了几个词。clickedRef 是 ref，改了不触发重渲染，所以另存一份 state：
+     点词密度是每篇文章都有的难度信号，不像小测那样要你主动去做。 */
+  const [clicks, setClicks] = useState(0);
+  const [lvHint, setLvHint] = useState(null); // {dir:"up"|"down", to:难度id, label}
 
   const cacheRef = useRef(new Map());
   /* 词级词典缓存，落地 localStorage。cacheRef 的键带句子，换篇文章就失效，
@@ -1046,6 +1052,17 @@ export default function App() {
       return { ...s, log: { ...s.log, [d]: { ...day, m } } };
     });
   }, [vocab]);
+
+  /* 读着读着发现太难，立刻提示——此刻提示才有用，你可以马上换一篇。
+     只提示，不自作主张改难度：改了下一篇才生效，用户得知情。
+     阈值 8 个词且超过 8%：低于 8 个可能只是碰巧有几个生词，不足以说明问题。 */
+  useEffect(() => {
+    if (!article || lvHint || curWords < 60) return;
+    const idx = LEVELS.findIndex((l) => l.id === level);
+    if (clicks >= 8 && clicks / curWords > 0.08 && idx > 0) {
+      setLvHint({ dir: "down", to: LEVELS[idx - 1].id, label: LEVELS[idx - 1].label });
+    }
+  }, [clicks, curWords, level, article, lvHint]);
 
   const streak = useMemo(() => calcStreak(stats.log), [stats.log]);
   const dueList = useMemo(
@@ -1216,6 +1233,12 @@ export default function App() {
     }
     const wantNewTab = !!(opts && opts.newTab) || !activeId;
     if (wantNewTab && !canOpenNewTab()) return;
+
+    /* 上一篇几乎没查词 = 偏简单。这个判断只能在读完离开时下——读到一半
+       点得少，可能是后面还没读。所以放在生成下一篇的时刻。 */
+    const prevIdx = LEVELS.findIndex((l) => l.id === theLevel);
+    const tooEasy = article && curWords >= 120 && clicks <= 2 && prevIdx < LEVELS.length - 1;
+
     hardStop();
     setGenLoading(true);
     setGenError("");
@@ -1281,6 +1304,9 @@ export default function App() {
       setQuiz({ st: "idle" });
       setShowTrans(false);
       clickedRef.current = new Set();
+      setClicks(0);
+      // 提示挂到新文章上（重置之后再设，否则会被上面那行清掉）
+      setLvHint(tooEasy ? { dir: "up", to: LEVELS[prevIdx + 1].id, label: LEVELS[prevIdx + 1].label } : null);
       setStats((s) => {
         const d = dateStr();
         const day = s.log[d] || {};
@@ -1319,7 +1345,11 @@ export default function App() {
     setDict({ status: "loading", term: q, key, sent: sentence });
     openDict();
     const ql = q.toLowerCase();
-    if (/^[a-zA-Z]/.test(q)) clickedRef.current.add(ql);
+    if (/^[a-zA-Z]/.test(q)) {
+      const before = clickedRef.current.size;
+      clickedRef.current.add(ql);
+      if (clickedRef.current.size !== before) setClicks(clickedRef.current.size);
+    }
 
     // 计数放在所有缓存判断之前：本地秒开的那一次同样是"你又不认识它了"
     seenRef.current[ql] = (seenRef.current[ql] || 0) + 1;
@@ -1665,6 +1695,8 @@ ${curText}
     setQuiz({ st: "idle" });
     setShowTrans(false);
     clickedRef.current = new Set();
+    setClicks(0);
+    setLvHint(null);
     setImpOpen(false);
     setImpErr("");
     setImpText("");
@@ -2501,6 +2533,28 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                 <Skeleton topic={topic || reTopicOf(article)} />
               ) : (
                 <>
+                  {/* 点词密度给出的难度建议。只提示不自动改——难度改了下一篇
+                      才生效，替用户默默改掉会让人莫名其妙。 */}
+                  {lvHint && (
+                    <div className={lvHint.dir === "down" ? "lvhint hard" : "lvhint easy"}>
+                      <span>
+                        {lvHint.dir === "down"
+                          ? `这篇你点了 ${clicks} 个词，可能偏难了`
+                          : `上一篇你几乎没查词，也许可以再难一点`}
+                      </span>
+                      <span className="lvhint-a">
+                        <button className="lvhint-b" onClick={() => {
+                          setLevel(lvHint.to);
+                          setStats((s) => ({ ...s, lv: lvHint.to }));
+                          showToast(`难度已调到「${lvHint.label}」，下一篇生效`);
+                          setLvHint(null);
+                        }}>调到{lvHint.label}</button>
+                        <button className="lvhint-x" onClick={() => setLvHint(null)} aria-label="不用了">
+                          <X size={13} />
+                        </button>
+                      </span>
+                    </div>
+                  )}
                   <div className="art-meta">
                     {article.srcUrl ? (
                       <>
@@ -4272,6 +4326,16 @@ button:disabled{opacity:.55;cursor:default}
 .st-n{font-size:25px;font-weight:800;letter-spacing:-.5px;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--ink)}
 .st-n svg{color:#E0862B}
 .st-l{display:block;margin-top:4px;font-size:12.5px;color:var(--mut)}
+.lvhint{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  margin-bottom:12px;border-radius:11px;padding:9px 10px 9px 13px;font-size:13px;font-weight:600}
+.lvhint.hard{background:var(--hi-wash);border:1px solid var(--hi-soft);color:var(--hi-text)}
+.lvhint.easy{background:var(--ok-bg);border:1px solid var(--ok-bg);color:var(--ok)}
+.lvhint-a{display:inline-flex;align-items:center;gap:4px;flex:none}
+.lvhint-b{font-size:12.5px;font-weight:700;color:var(--card);background:var(--ink2);
+  border-radius:7px;padding:4px 10px}
+.lvhint-b:hover{background:var(--ink)}
+.lvhint-x{color:var(--mut);padding:3px}
+.lvhint-x:hover{color:var(--ink)}
 .missed{margin:14px 0 4px;background:var(--bad-bg);border:1px solid var(--bad-bg);
   border-radius:12px;padding:12px 14px;text-align:left}
 .missed-t{font-size:13px;font-weight:700;color:var(--bad);margin-bottom:8px}
