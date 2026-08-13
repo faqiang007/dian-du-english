@@ -769,6 +769,11 @@ const clampRate = (r) => Math.min(1.4, Math.max(0.5, r || 1));
 /* 复习进度：没有记录的旧词视为"到期" */
 const rvOf = (v) => v.rv || { due: v.savedAt || 0, iv: 0, streak: 0 };
 
+/* 连对 3 次即视为已掌握。这个数才是学习的收获——「生词总数」只增不减，
+   衡量的是欠债，越努力看着越吓人；界面上得让人看见自己拿下了多少。 */
+const MASTER_STREAK = 3;
+const isMastered = (v) => rvOf(v).streak >= MASTER_STREAK;
+
 /* 能织进文章的英文表达：英文词条取词本身，中文词条取第一个英文译词。
    生词本只存这两类（句子 type:"sent" 不入库），别的一律返回空跳过。 */
 const WEAVE_MAX = 6;
@@ -1028,6 +1033,19 @@ export default function App() {
       return { ...s, log: { ...s.log, [d]: { ...day, [k]: (day[k] || 0) + n } } };
     });
   }
+
+  /* 每天记一笔"当前已掌握多少词"。词条上只有当前的 streak，没有变化历史，
+     不记快照就永远画不出增长曲线。只在数字变了时写，避免无谓的重渲染。
+     注意：曲线从装上这个版本的那天开始才有数据，之前的日子补不出来。 */
+  useEffect(() => {
+    const m = vocab.filter(isMastered).length;
+    setStats((s) => {
+      const d = dateStr();
+      const day = s.log[d] || {};
+      if (day.m === m) return s;
+      return { ...s, log: { ...s.log, [d]: { ...day, m } } };
+    });
+  }, [vocab]);
 
   const streak = useMemo(() => calcStreak(stats.log), [stats.log]);
   const dueList = useMemo(
@@ -2143,6 +2161,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
             <StatsView
               stats={stats}
               streak={streak}
+              vocab={vocab}
               vocabCount={vocab.length}
               dueCount={dueList.length}
               level={LEVELS.find((l) => l.id === level)}
@@ -3378,7 +3397,7 @@ function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onExit, onRead }) {
 
 /* ---------- 统计面板 ---------- */
 
-function StatsView({ stats, streak, vocabCount, dueCount, level, onGoReview }) {
+function StatsView({ stats, streak, vocab = [], vocabCount, dueCount, level, onGoReview }) {
   const days = [];
   for (let i = 13; i >= 0; i--) {
     const d = new Date(Date.now() - i * DAY);
@@ -3386,10 +3405,24 @@ function StatsView({ stats, streak, vocabCount, dueCount, level, onGoReview }) {
     days.push({
       label: d.getDate(),
       val: (e.a || 0) + (e.q || 0) + (e.r || 0),
+      m: typeof e.m === "number" ? e.m : null,
       today: i === 0,
     });
   }
   const max = Math.max(1, ...days.map((d) => d.val));
+
+  const mastered = vocab.filter(isMastered).length;
+  const learning = vocabCount - mastered;
+
+  /* 没记快照的日子沿用上一个已知值——那几天不是"掌握了 0 个"，
+     是没打开过应用。缺口两端都没有数据时才留空。 */
+  let carry = null;
+  const mDays = days.map((d) => {
+    if (d.m !== null) carry = d.m;
+    return { ...d, mv: carry };
+  });
+  const mMax = Math.max(1, ...mDays.map((d) => d.mv || 0));
+  const hasCurve = mDays.some((d) => d.mv !== null);
   const empty = (stats.total || 0) === 0 && vocabCount === 0;
 
   return (
@@ -3413,8 +3446,12 @@ function StatsView({ stats, streak, vocabCount, dueCount, level, onGoReview }) {
               <span className="st-l">累计文章</span>
             </div>
             <div className="st-card">
-              <span className="st-n">{vocabCount}</span>
-              <span className="st-l">生词总数</span>
+              <span className="st-n">{learning}</span>
+              <span className="st-l">学习中</span>
+            </div>
+            <div className="st-card">
+              <span className="st-n master">{mastered}</span>
+              <span className="st-l">已掌握</span>
             </div>
             <button className="st-card go" onClick={onGoReview}>
               <span className="st-n">{dueCount}</span>
@@ -3436,6 +3473,24 @@ function StatsView({ stats, streak, vocabCount, dueCount, level, onGoReview }) {
               ))}
             </div>
           </div>
+
+          {hasCurve && (
+            <div className="st-chart">
+              <div className="sec-l">已掌握词数（连对 {MASTER_STREAK} 次即算掌握）</div>
+              <div className="bars">
+                {mDays.map((d, i) => (
+                  <div className="barcol" key={i} title={d.mv === null ? `${d.label}日：无记录` : `${d.label}日：掌握 ${d.mv} 个`}>
+                    <div
+                      className={d.today ? "bar mbar today" : "bar mbar"}
+                      style={{ height: `${Math.max(4, ((d.mv || 0) / mMax) * 74)}px`, opacity: d.mv === null ? 0.18 : 1 }}
+                    />
+                    <span className="bar-l">{i % 3 === 0 || d.today ? d.label : ""}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="st-note">这条曲线从你装上这个版本那天开始记，之前的日子补不出来。</p>
+            </div>
+          )}
 
           {level && (
             <p className="st-lv">当前难度：<b>{level.label}</b>（{level.tag}）— 读后小测会自动帮你升降档</p>
@@ -4168,6 +4223,9 @@ button:disabled{opacity:.55;cursor:default}
 .st-n{font-size:25px;font-weight:800;letter-spacing:-.5px;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--ink)}
 .st-n svg{color:#E0862B}
 .st-l{display:block;margin-top:4px;font-size:12.5px;color:var(--mut)}
+.st-n.master{color:var(--ok)}
+.bar.mbar{background:var(--ok)}
+.st-note{margin-top:9px;font-size:11.5px;color:var(--mut)}
 .st-chart{margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:12px;
   padding:18px;box-shadow:var(--sh)}
 .bars{display:flex;align-items:flex-end;gap:6px;height:100px;margin-top:10px}
