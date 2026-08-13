@@ -515,6 +515,31 @@ function errText(e, providerId) {
 const DICT_CACHE_KEY = "dd-dict-cache-v1";
 const DICT_CACHE_MAX = 400;
 
+/* ---- 查过几次 ----
+   「我点了这个词」是本应用能拿到的最强信号：它精确说明了你不认识哪个词。
+   以前这个信号只喂给小测（clickedRef），换篇文章就清空。现在按词累计并落盘，
+   查到第 SEEN_NUDGE 次就提醒收进生词本——同一个词查两次，基本可以断定
+   你是真不认识，而不是手滑。 */
+const SEEN_KEY = "dd-seen-v1";
+const SEEN_MAX = 800;
+const SEEN_NUDGE = 2;
+
+function loadSeen() {
+  const raw = sGet(SEEN_KEY);
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+}
+function saveSeen(obj) {
+  let o = obj;
+  const keys = Object.keys(o);
+  if (keys.length > SEEN_MAX) {
+    // 满了先丢只查过一次的——那些多半是扫一眼就懂的词，留着没意义
+    o = {};
+    for (const k of keys) if (obj[k] > 1) o[k] = obj[k];
+  }
+  sSet(SEEN_KEY, o);
+  return o;
+}
+
 function stripCtx(d) {
   return d && d.context_cn ? { ...d, context_cn: null } : d;
 }
@@ -892,6 +917,7 @@ export default function App() {
      且刷新即清空——同一个词反复花钱查。这份只按单词存，跨文章跨会话都能命中。
      存进来的条目一律剥掉 context_cn：那是针对某一句的解释，套到别的句子上会误导。 */
   const dictCacheRef = useRef(loadDictCache());
+  const seenRef = useRef(loadSeen()); // {词: 查过几次}，跨文章跨会话累计
   const readRef = useRef({ on: false });
   const lastLookupRef = useRef(null);
   const lastWordRef = useRef(null);   // 从整句解析返回单词卡
@@ -1274,9 +1300,14 @@ export default function App() {
     lastLookupRef.current = [term, sentence, key];
     setDict({ status: "loading", term: q, key, sent: sentence });
     openDict();
-    if (/^[a-zA-Z]/.test(q)) clickedRef.current.add(q.toLowerCase());
+    const ql = q.toLowerCase();
+    if (/^[a-zA-Z]/.test(q)) clickedRef.current.add(ql);
 
-    const cacheKey = q.toLowerCase() + "||" + (sentence || "");
+    // 计数放在所有缓存判断之前：本地秒开的那一次同样是"你又不认识它了"
+    seenRef.current[ql] = (seenRef.current[ql] || 0) + 1;
+    seenRef.current = saveSeen(seenRef.current);
+
+    const cacheKey = ql + "||" + (sentence || "");
     const finish = (data, local) => {
       const lemma = (data.word || data.input || q).toLowerCase();
       const hit = vocab.find(
@@ -1292,6 +1323,7 @@ export default function App() {
           meet: hit ? hit.meet || 1 : 0,
           // local=true 表示这条没花 API，界面据此提供「补一条语境」的入口
           local: !!local,
+          seen: seenRef.current[ql] || 1,
         },
       };
       setDict(next);
@@ -1309,7 +1341,6 @@ export default function App() {
     /* 本地先行：生词本 > 词级缓存。命中就秒开，不调 API 也不花钱。
        生词本里存的就是完整词条，以前却从不读它——收藏过的词再点一次
        照样去问模型，这是纯浪费。 */
-    const ql = q.toLowerCase();
     const localHit =
       [
         vocab.find((v) => v.key === ql || (v.surface || "").toLowerCase() === ql)?.data,
@@ -2907,6 +2938,14 @@ function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave, onCtx, ctxBu
       {meta?.saved && (
         <div className="meetb"><Brain size={12} /> 你的生词 · 第 {meta.meet} 次见面</div>
       )}
+      {/* 同一个词查到第二次，基本可以断定是真不认识。此刻你正看着释义，
+          提醒一句不算打断——比让你在读得投入时自己想起来按收藏靠谱得多。 */}
+      {!meta?.saved && meta?.seen >= 2 && (
+        <div className="nudge">
+          <span><Brain size={12} /> 这个词你查过 {meta.seen} 次了</span>
+          <button className="nudge-b" onClick={onSave}>收进生词本</button>
+        </div>
+      )}
       <div className="hw">{d.word}</div>
       <div className="phon-row">
         {d.phonetic_us && (
@@ -4038,6 +4077,15 @@ button:disabled{opacity:.55;cursor:default}
    白字压上去只有 2.6:1 糊成一片；--card 在每套主题里都跟 --blue 深浅相反。 */
 .ctx.tech{background:var(--blue-bg);border-color:var(--blue-bg)}
 .ctx-l.tech-l{color:var(--card);background:var(--blue)}
+.nudge{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;
+  background:var(--hi-wash);border:1px solid var(--hi-soft);border-radius:10px;padding:7px 9px 7px 11px;
+  font-size:12px;font-weight:700;color:var(--hi-text)}
+.nudge span{display:inline-flex;align-items:center;gap:5px}
+/* --hi-hot 在四套主题里都是亮金色，所以这里写死深棕字，两边都够对比度；
+   写 #fff 或 var(--card) 都会在某一套主题下糊掉 */
+.nudge-b{flex:none;font-size:12px;font-weight:700;color:#4A3200;background:var(--hi-hot);
+  border-radius:7px;padding:4px 10px}
+.nudge-b:hover{filter:brightness(1.06)}
 .ctxbtn{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12.5px;
   color:var(--ink2);border:1px dashed var(--line);border-radius:9px;padding:6px 11px;background:transparent}
 .ctxbtn:hover:not(:disabled){color:var(--blue);border-color:var(--blue)}
