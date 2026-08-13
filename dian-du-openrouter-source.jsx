@@ -1500,6 +1500,26 @@ words 按相关度最多给 5 个；如果回答里没有值得收藏的词就�
     }
   }
 
+  /* 小测错题词批量入库。存的是薄词条（只有一条释义），这没问题——
+     isFullEntry 会挡住它被当成查词缓存用，下次点它仍会拉一份完整的。 */
+  function saveMissedWords(list) {
+    const fresh = (list || []).filter((m) => m.w && !savedKeys.has(m.w.toLowerCase()));
+    if (!fresh.length) { showToast("这些词都已经在生词本里了"); return; }
+    setVocab((v) => [
+      ...fresh.map((m) => ({
+        key: m.w.toLowerCase(),
+        data: {
+          type: "en", word: m.w, phonetic_us: "", phonetic_uk: "",
+          context_cn: null, senses: [{ pos: "", cn: m.cn || "" }], examples: [],
+        },
+        surface: m.w, savedAt: Date.now(), meet: 1,
+        rv: { due: Date.now(), iv: 0, streak: 0 },
+      })),
+      ...v,
+    ]);
+    showToast(`已收 ${fresh.length} 个错题词，今天就能复习`);
+  }
+
   function addChatWord(cw) {
     const key = (cw.w || "").toLowerCase().trim();
     if (!key) return;
@@ -1583,7 +1603,7 @@ parts 按语序给 3-6 项，覆盖整句主干和关键修饰。`;
 ${curText}
 
 只返回 JSON，不要任何其他文字或 markdown 代码块：
-{"questions":[{"q":"题干","options":["选项A","选项B","选项C","选项D"],"answer":0,"explain":"一句话中文解析"}]}
+{"questions":[{"q":"题干","options":["选项A","选项B","选项C","选项D"],"answer":0,"explain":"一句话中文解析","word":"这道题考察的那个英文单词原形；内容理解题填 null","word_cn":"该词的简短中文释义；word 为 null 时也填 null"}]}
 
 题干用中文提问（考察的英文词/句可直接引用原文），answer 是正确选项的下标 0-3。`;
     try {
@@ -1592,15 +1612,23 @@ ${curText}
         (x) => x.q && Array.isArray(x.options) && x.options.length >= 2
       );
       if (!qs.length) throw new Error("bad");
-      setQuiz({ st: "on", qs, i: 0, sel: null, score: 0 });
+      setQuiz({ st: "on", qs, i: 0, sel: null, score: 0, missed: [] });
     } catch (e) {
       setQuiz({ st: "err" });
     }
   }
   function pickOption(oi) {
     if (quiz.st !== "on" || quiz.sel !== null) return;
-    const right = oi === quiz.qs[quiz.i].answer;
-    setQuiz({ ...quiz, sel: oi, score: quiz.score + (right ? 1 : 0) });
+    const q = quiz.qs[quiz.i];
+    const right = oi === q.answer;
+    // 答错是比"点过这个词"更硬的证据：你确实没掌握它。以前这个信号
+    // 什么也不触发，现在收下来，结果页可以一键送进生词本。
+    const missed = quiz.missed || [];
+    const w = (q.word || "").trim();
+    const next = !right && w && !missed.some((m) => m.w.toLowerCase() === w.toLowerCase())
+      ? [...missed, { w, cn: (q.word_cn || "").trim() }]
+      : missed;
+    setQuiz({ ...quiz, sel: oi, score: quiz.score + (right ? 1 : 0), missed: next });
   }
   function nextQuestion() {
     if (quiz.st !== "on") return;
@@ -1623,7 +1651,7 @@ ${curText}
       setStats((s) => ({ ...s, lv: nl.id }));
       adj = { dir: "down", label: nl.label, tag: nl.tag };
     }
-    setQuiz({ st: "done", qs: quiz.qs, score: quiz.score, adj });
+    setQuiz({ st: "done", qs: quiz.qs, score: quiz.score, adj, missed: quiz.missed || [] });
   }
 
   /* ---- 导入材料 ---- */
@@ -2613,7 +2641,8 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                   )}
                   {(quiz.st === "on" || quiz.st === "done") && (
                     <QuizBlock quiz={quiz} onPick={pickOption} onNext={nextQuestion}
-                      onRetryArticle={() => generateArticle(reTopicOf(article))} />
+                      onRetryArticle={() => generateArticle(reTopicOf(article))}
+                      onSaveMissed={saveMissedWords} savedKeys={savedKeys} />
                   )}
 
                 </>
@@ -3237,7 +3266,7 @@ function SentCard({ d, onSpeak, onBack }) {
 
 /* ---------- 读后小测 ---------- */
 
-function QuizBlock({ quiz, onPick, onNext, onRetryArticle }) {
+function QuizBlock({ quiz, onPick, onNext, onRetryArticle, onSaveMissed, savedKeys }) {
   if (quiz.st === "done") {
     const total = quiz.qs.length;
     return (
@@ -3253,6 +3282,26 @@ function QuizBlock({ quiz, onPick, onNext, onRetryArticle }) {
             <p className="quiz-adj down">我们放缓一点，难度已调到「{quiz.adj.label} · {quiz.adj.tag}」，稳扎稳打</p>
           )}
           {!quiz.adj && <p className="quiz-adj">这个难度刚刚好，保持！</p>}
+
+          {/* 答错的词单独列出来。这是全应用最硬的一条证据——不是"你点过它"，
+              是"你确实答错了"，不收进生词本等于白测一场。 */}
+          {(quiz.missed || []).length > 0 && (
+            <div className="missed">
+              <div className="missed-t">这几个词答错了，收进生词本？</div>
+              <div className="missed-ws">
+                {quiz.missed.map((m) => (
+                  <span className="missed-w" key={m.w}>
+                    <b>{m.w}</b>{m.cn ? ` · ${m.cn}` : ""}
+                    {savedKeys?.has(m.w.toLowerCase()) && <i className="missed-ok">已在本子里</i>}
+                  </span>
+                ))}
+              </div>
+              <button className="btn-pri small" onClick={() => onSaveMissed(quiz.missed)}>
+                <Plus size={14} /> 全部收进生词本
+              </button>
+            </div>
+          )}
+
           <button className="btn-soft" onClick={onRetryArticle}>
             <RefreshCw size={14} /> 按新难度再来一篇
           </button>
@@ -4223,6 +4272,13 @@ button:disabled{opacity:.55;cursor:default}
 .st-n{font-size:25px;font-weight:800;letter-spacing:-.5px;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--ink)}
 .st-n svg{color:#E0862B}
 .st-l{display:block;margin-top:4px;font-size:12.5px;color:var(--mut)}
+.missed{margin:14px 0 4px;background:var(--bad-bg);border:1px solid var(--bad-bg);
+  border-radius:12px;padding:12px 14px;text-align:left}
+.missed-t{font-size:13px;font-weight:700;color:var(--bad);margin-bottom:8px}
+.missed-ws{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:11px}
+.missed-w{font-size:12.5px;color:var(--ink2);background:var(--card);border:1px solid var(--line);
+  border-radius:8px;padding:4px 9px}
+.missed-ok{font-style:normal;font-size:11px;color:var(--ok);margin-left:5px}
 .st-n.master{color:var(--ok)}
 .bar.mbar{background:var(--ok)}
 .st-note{margin-top:9px;font-size:11.5px;color:var(--mut)}
