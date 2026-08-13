@@ -427,8 +427,21 @@ async function callClaude(prompt, apiKey, model, web, providerId) {
   const clean = text.replace(/```json|```/g, "").trim();
   const s = clean.indexOf("{");
   const e = clean.lastIndexOf("}");
-  if (s === -1 || e === -1) throw new Error("API");
-  const out = JSON.parse(clean.slice(s, e + 1));
+  // 模型没按 JSON 返回时，把它实际说了什么带上——空字符串说明这个模型
+  // 根本没吐正文（推理模型常把内容放在别的字段），有正文则是格式跑偏了
+  if (s === -1 || e === -1) {
+    const err = new Error("API");
+    err.detail = clean ? `模型没按 JSON 返回：${clean.slice(0, 200)}` : "模型返回了空内容（换个模型试试）";
+    throw err;
+  }
+  let out;
+  try {
+    out = JSON.parse(clean.slice(s, e + 1));
+  } catch (pe) {
+    const err = new Error("API");
+    err.detail = `模型返回的 JSON 有语法错误：${pe.message}`;
+    throw err;
+  }
   // 挂成不可枚举，免得混进正文字段或被 JSON.stringify 存进 localStorage
   Object.defineProperty(out, "__cites", { value: citesOf(data), enumerable: false });
   return out;
@@ -486,7 +499,12 @@ function errText(e, providerId) {
       ? `连不上 ${p.name} 服务器，检查网络（国内使用需要开代理），然后重试。`
       : `连不上 ${p.name} 服务器，检查一下网络再重试。`;
     case "NOLIST": return `${p.name} 没有提供模型列表接口，请照官网文档手填模型名。`;
-    default: return "出了点问题，重试一下。";
+    default: {
+      // 服务商原文（模型不存在、参数不被支持之类）都在 detail 里。以前这里
+      // 一律显示"出了点问题"，把唯一能定位的线索丢了，用户和作者都无从查起。
+      const d = (e.detail || "").trim();
+      return d ? `出了点问题：${d.slice(0, 300)}` : "出了点问题，重试一下。";
+    }
   }
 }
 
