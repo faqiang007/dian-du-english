@@ -2367,6 +2367,10 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
       {/* ======= 左侧栏 ======= */}
       {navOpen && <div className="sbmask" onClick={() => setNavOpen(false)} />}
       <aside className={navOpen ? "sidebar open" : "sidebar"}>
+        {/* 窄屏下侧栏占满整屏、不再有遮罩可点，得给一个明确的关闭出口 */}
+        <button className="sb-close" onClick={() => setNavOpen(false)} aria-label="关闭菜单">
+          <X size={18} />
+        </button>
         <button className="brand2" onClick={() => go("read")}>
           <span className="logo">007</span>学英语
         </button>
@@ -4649,6 +4653,9 @@ button:disabled{opacity:.55;cursor:default}
 .dictwrap{position:sticky;top:76px}
 .dict{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:20px;
   max-height:calc(100vh - 100px);overflow:auto;box-shadow:var(--sh)}
+.sb-close{display:none;position:absolute;top:12px;right:12px;color:var(--mut);
+  background:var(--line2);border-radius:99px;padding:7px;z-index:1}
+.sb-close:hover{color:var(--ink)}
 .dict-close{display:flex;position:absolute;top:10px;right:12px;color:var(--mut);
   background:var(--line2);border-radius:99px;padding:6px}
 .dsearch{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;
@@ -5047,6 +5054,13 @@ button.vb-w:hover{color:var(--blue)}
 
 /* ---- 移动端 ---- */
 @media (max-width:880px){
+  /* 侧栏也占满整屏：这个宽度下 252px 的抽屉 + 半透明遮罩，等于把三层界面
+     压在一起，正是"看着重叠、不美观"的来源。整屏之后没有遮罩可点，改用
+     右上角的关闭按钮退出（点任意导航项也会自动收起）。 */
+  .sidebar{width:100%;height:100dvh;padding:20px 16px;border-right:none;
+    box-shadow:none;overflow-y:auto}
+  .sbmask{display:none}
+  .sb-close{display:inline-flex}
   .layout{display:block;padding:18px 14px 150px}
   .topbar{padding:0 14px;gap:8px}
   .article{padding:22px 18px 26px;border-radius:13px}
@@ -5057,13 +5071,16 @@ button.vb-w:hover{color:var(--blue)}
   .lv-mini{margin:0}
   .fc-word{font-size:31px}
   .lnk-imp{margin-left:0}
-  /* 同侧栏：跨断点时过渡可能卡在起点，只靠位移藏不住，补一道不带过渡的 visibility */
-  .dictwrap{position:fixed;left:0;right:0;bottom:0;z-index:60;
-    transform:translateY(112%);visibility:hidden;
+  /* 窄屏下单词卡占满整屏，成为独立的一页。
+     原来是底部抽屉（只占 64vh），上下都露出主页内容，看着就是几层界面叠在
+     一起；屏幕本来就窄，半覆盖既不好看也没多给出可读面积。
+     visibility 不加过渡的理由同侧栏：位移动画卡住时也得藏得住。 */
+  .dictwrap{position:fixed;inset:0;z-index:60;
+    transform:translateY(102%);visibility:hidden;
     transition:transform .26s ease}
   .dictwrap.open{transform:translateY(0);visibility:visible}
-  .dict{border-radius:16px 16px 0 0;max-height:64vh;position:relative;
-    box-shadow:0 -10px 34px rgba(17,24,38,.22);padding-top:24px}
+  .dict{border-radius:0;max-height:none;height:100%;position:relative;
+    border:none;box-shadow:none;padding-top:26px;overflow:auto}
   .dict-close{display:flex}
   .shadowbar{bottom:14px}
 }
