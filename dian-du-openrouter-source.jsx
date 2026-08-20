@@ -1489,11 +1489,17 @@ export default function App() {
   /* 词典面板的开合。桌面端用 prefs.dictOff 记住"用户主动收起"，收起后正文占满整幅；
      移动端仍只看 dictOpen（底部抽屉），CSS 上用媒体查询隔开，两边互不影响。
      任何一次查词都会自动把面板重新展开——点了词却看不到释义是说不通的。 */
+  /* 查词时把其他浮层一律收掉。窄屏下它们都是盖住整屏的固定层，
+     留着任何一个都会和单词卡叠在一起：
+       .seltip  z-80  划词后的「译」气泡，比单词卡还高，会飘在它上面
+       .sidebar z-70  侧栏抽屉
+       .popmask z-69  难度下拉的全屏遮罩，会挡住单词卡上的点击
+     词典本身是 z-60，谁都比它高，所以必须主动关，不能指望层级压住。 */
   function openDict() {
     setDictOpen(true);
-    // 窄屏下侧栏和词典都是铺满屏幕的浮层，谁也不让谁，同时开着就叠成一团
-    // （词典在 DOM 里靠后，会把整条侧栏盖住）。开词典就顺手收起侧栏抽屉。
     setNavOpen(false);
+    setSelTip(null);
+    setLvMenu(false);
     setPrefs((p) => (p.dictOff ? { ...p, dictOff: false } : p));
   }
   function closeDict() {
