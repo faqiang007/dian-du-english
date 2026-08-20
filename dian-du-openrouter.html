@@ -1034,10 +1034,19 @@ button.vb-w:hover{color:var(--blue)}
    \u514D\u5F97\u4E2D\u7B49\u5BBD\u5EA6\u7684\u7A97\u53E3\u88AB\u4FA7\u680F+\u8BCD\u5178\u6324\u5F97\u6B63\u6587\u53EA\u5269\u4E00\u6761\u7F1D\u3002 */
 @media (max-width:1000px){
   .app{grid-template-columns:minmax(0,1fr)}
+  /* \u6536\u8D77\u72B6\u6001\u5FC5\u987B\u540C\u65F6\u7528 visibility\uFF0C\u4E0D\u80FD\u53EA\u9760 transform \u4F4D\u79FB\u3002
+     \u5BBD\u5C4F\u65F6\u4FA7\u680F\u6CA1\u6709 transform\uFF0C\u628A\u7A97\u53E3\u62D6\u7A84\u8DE8\u8FC7\u8FD9\u4E2A\u65AD\u70B9\u65F6\uFF0C\u5B83\u8981\u4ECE\u300C\u65E0\u300D\u8FC7\u6E21\u5230
+     -102%\uFF1B\u8FD9\u4E2A\u8FC7\u6E21\u5728\u5E03\u5C40\u6A21\u5F0F\u5207\u6362\u7684\u5F53\u53E3\u53EF\u80FD\u8DD1\u4E0D\u8D77\u6765\uFF0C\u503C\u5361\u5728\u8D77\u70B9 0\uFF0C\u4E8E\u662F\u4FA7\u680F
+     \u539F\u5730\u4E0D\u52A8\u538B\u5728\u6B63\u6587\u4E0A\u2014\u2014class \u4E0A\u5E76\u6CA1\u6709 open\u3001\u906E\u7F69\u4E5F\u4E0D\u6E32\u67D3\uFF0C\u770B\u7740\u5C31\u662F"\u9875\u9762\u91CD\u53E0"\u3002
+
+     visibility \u8FD9\u91CC**\u4E0D\u52A0\u8FC7\u6E21**\uFF0C\u6536\u8D77\u65F6\u7ACB\u5373\u751F\u6548\uFF0C\u4E0D\u4F9D\u8D56\u52A8\u753B\u65F6\u949F\uFF1A\u52A8\u753B\u4E00\u65E6\u5361\u4F4F\uFF0C
+     \u4EFB\u4F55\u5E26\u5EF6\u8FDF\u7684\u9690\u85CF\u90FD\u6C38\u8FDC\u7B49\u4E0D\u5230\u3002\u4EE3\u4EF7\u662F\u6536\u8D77\u65F6\u6CA1\u6709\u6ED1\u51FA\u52A8\u753B\uFF08\u5C55\u5F00\u7684\u6ED1\u5165\u8FD8\u5728\uFF09\uFF0C
+     \u7528\u4E00\u4E2A\u52A8\u6548\u6362\u4E00\u4E2A\u5FC5\u73B0\u7684\u9519\u4F4D\uFF0C\u503C\u5F97\u3002 */
   .sidebar{position:fixed;left:0;top:0;width:252px;
-    transform:translateX(-102%);transition:transform .24s ease;
+    transform:translateX(-102%);visibility:hidden;
+    transition:transform .24s ease;
     box-shadow:0 0 40px rgba(17,24,38,.2)}
-  .sidebar.open{transform:none}
+  .sidebar.open{transform:none;visibility:visible}
   .sbmask{display:block;position:fixed;inset:0;z-index:65;background:rgba(17,24,38,.4)}
   .menubtn{display:inline-flex}
 }
@@ -1054,9 +1063,11 @@ button.vb-w:hover{color:var(--blue)}
   .lv-mini{margin:0}
   .fc-word{font-size:31px}
   .lnk-imp{margin-left:0}
+  /* \u540C\u4FA7\u680F\uFF1A\u8DE8\u65AD\u70B9\u65F6\u8FC7\u6E21\u53EF\u80FD\u5361\u5728\u8D77\u70B9\uFF0C\u53EA\u9760\u4F4D\u79FB\u85CF\u4E0D\u4F4F\uFF0C\u8865\u4E00\u9053\u4E0D\u5E26\u8FC7\u6E21\u7684 visibility */
   .dictwrap{position:fixed;left:0;right:0;bottom:0;z-index:60;
-    transform:translateY(112%);transition:transform .26s ease}
-  .dictwrap.open{transform:translateY(0)}
+    transform:translateY(112%);visibility:hidden;
+    transition:transform .26s ease}
+  .dictwrap.open{transform:translateY(0);visibility:visible}
   .dict{border-radius:16px 16px 0 0;max-height:64vh;position:relative;
     box-shadow:0 -10px 34px rgba(17,24,38,.22);padding-top:24px}
   .dict-close{display:flex}

@@ -5028,10 +5028,19 @@ button.vb-w:hover{color:var(--blue)}
    免得中等宽度的窗口被侧栏+词典挤得正文只剩一条缝。 */
 @media (max-width:1000px){
   .app{grid-template-columns:minmax(0,1fr)}
+  /* 收起状态必须同时用 visibility，不能只靠 transform 位移。
+     宽屏时侧栏没有 transform，把窗口拖窄跨过这个断点时，它要从「无」过渡到
+     -102%；这个过渡在布局模式切换的当口可能跑不起来，值卡在起点 0，于是侧栏
+     原地不动压在正文上——class 上并没有 open、遮罩也不渲染，看着就是"页面重叠"。
+
+     visibility 这里**不加过渡**，收起时立即生效，不依赖动画时钟：动画一旦卡住，
+     任何带延迟的隐藏都永远等不到。代价是收起时没有滑出动画（展开的滑入还在），
+     用一个动效换一个必现的错位，值得。 */
   .sidebar{position:fixed;left:0;top:0;width:252px;
-    transform:translateX(-102%);transition:transform .24s ease;
+    transform:translateX(-102%);visibility:hidden;
+    transition:transform .24s ease;
     box-shadow:0 0 40px rgba(17,24,38,.2)}
-  .sidebar.open{transform:none}
+  .sidebar.open{transform:none;visibility:visible}
   .sbmask{display:block;position:fixed;inset:0;z-index:65;background:rgba(17,24,38,.4)}
   .menubtn{display:inline-flex}
 }
@@ -5048,9 +5057,11 @@ button.vb-w:hover{color:var(--blue)}
   .lv-mini{margin:0}
   .fc-word{font-size:31px}
   .lnk-imp{margin-left:0}
+  /* 同侧栏：跨断点时过渡可能卡在起点，只靠位移藏不住，补一道不带过渡的 visibility */
   .dictwrap{position:fixed;left:0;right:0;bottom:0;z-index:60;
-    transform:translateY(112%);transition:transform .26s ease}
-  .dictwrap.open{transform:translateY(0)}
+    transform:translateY(112%);visibility:hidden;
+    transition:transform .26s ease}
+  .dictwrap.open{transform:translateY(0);visibility:visible}
   .dict{border-radius:16px 16px 0 0;max-height:64vh;position:relative;
     box-shadow:0 -10px 34px rgba(17,24,38,.22);padding-top:24px}
   .dict-close{display:flex}
