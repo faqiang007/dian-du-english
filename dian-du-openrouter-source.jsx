@@ -1491,6 +1491,9 @@ export default function App() {
      任何一次查词都会自动把面板重新展开——点了词却看不到释义是说不通的。 */
   function openDict() {
     setDictOpen(true);
+    // 窄屏下侧栏和词典都是铺满屏幕的浮层，谁也不让谁，同时开着就叠成一团
+    // （词典在 DOM 里靠后，会把整条侧栏盖住）。开词典就顺手收起侧栏抽屉。
+    setNavOpen(false);
     setPrefs((p) => (p.dictOff ? { ...p, dictOff: false } : p));
   }
   function closeDict() {
@@ -2431,7 +2434,8 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
       <div className="mainwrap">
         {/* ======= 细顶条：只放查词 ======= */}
         <header className="topbar">
-          <button className="menubtn" onClick={() => setNavOpen(true)} aria-label="菜单">
+          {/* 开侧栏时收起词典抽屉，理由同 openDict：两个浮层不能同时占屏 */}
+          <button className="menubtn" onClick={() => { setNavOpen(true); setDictOpen(false); }} aria-label="菜单">
             <Menu size={18} />
           </button>
           <div className="tsearch">
@@ -4365,8 +4369,10 @@ button:disabled{opacity:.55;cursor:default}
 @keyframes sp{to{transform:rotate(360deg)}}
 
 /* ---- 左侧栏 ---- */
+/* 侧栏抽屉比词典抽屉(60)高一层：它自带遮罩，是"当前占屏的那个"。
+   以前两者同为 60，靠 DOM 先后决定谁盖谁，词典恰好靠后就把侧栏整条盖住了。 */
 .sidebar{background:var(--card);border-right:1px solid var(--line);padding:18px 12px;
-  display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;z-index:60}
+  display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;z-index:70}
 .brand2{display:flex;align-items:center;gap:9px;padding:6px 9px 18px;font-size:15px;
   font-weight:800;letter-spacing:.5px;color:var(--ink)}
 .brand2 .logo{width:30px;height:30px;border-radius:9px;background:var(--blue);color:#fff;
@@ -5020,7 +5026,7 @@ button.vb-w:hover{color:var(--blue)}
     transform:translateX(-102%);transition:transform .24s ease;
     box-shadow:0 0 40px rgba(17,24,38,.2)}
   .sidebar.open{transform:none}
-  .sbmask{display:block;position:fixed;inset:0;z-index:55;background:rgba(17,24,38,.4)}
+  .sbmask{display:block;position:fixed;inset:0;z-index:65;background:rgba(17,24,38,.4)}
   .menubtn{display:inline-flex}
 }
 
