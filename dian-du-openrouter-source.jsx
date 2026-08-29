@@ -553,6 +553,36 @@ function errText(e, providerId) {
 const DICT_CACHE_KEY = "dd-dict-cache-v1";
 const DICT_CACHE_MAX = 400;
 
+/* ---- 教材正文缓存 ----
+   和词典缓存同一个道理：抓一次要真联网、要花钱，抓到的正文就该留在本地，
+   下次点开直接读、离线也能读，也能当复习材料反复用。
+
+   条目比词条大得多（一节课文上千词），所以上限卡得紧，而且同时按条数和
+   总字数两头限——localStorage 是全应用共用的，教材不能把生词本挤掉。 */
+const BOOK_CACHE_KEY = "dd-book-cache-v1";
+const BOOK_CACHE_MAX = 20;
+const BOOK_CACHE_CHARS = 300000;
+const BOOK_WORDS = 1200;   // 一次抓多少词。比普通网页导入的 800 多一些，教材一节通常更长
+
+function loadBookCache() {
+  const raw = sGet(BOOK_CACHE_KEY);
+  return new Map(Array.isArray(raw) ? raw : []);
+}
+function saveBookCache(map) {
+  // 从最近写入的往回留，两个上限谁先到算谁
+  let out = [];
+  let chars = 0;
+  for (const e of [...map.entries()].reverse()) {
+    const n = ((e[1] && e[1].chapters) || []).join("").length;
+    if (out.length >= BOOK_CACHE_MAX || chars + n > BOOK_CACHE_CHARS) break;
+    out.push(e);
+    chars += n;
+  }
+  out.reverse();
+  const ok = sSet(BOOK_CACHE_KEY, out);
+  return { map: new Map(out), ok };
+}
+
 /* ---- 查过几次 ----
    「我点了这个词」是本应用能拿到的最强信号：它精确说明了你不认识哪个词。
    以前这个信号只喂给小测（clickedRef），换篇文章就清空。现在按词累计并落盘，
@@ -784,6 +814,33 @@ function looksLikeSentence(q) {
   return words >= 5 || /[.!?;]\s/.test(q.trim());
 }
 
+/* 联网抓一个网页的正文。「从网址导入」和教材页的「抓来读」共用这一条管线——
+   两边要的是同一件事：真去读那个页面，把原文摘回来，绝不让模型自己编。
+
+   抛出的错误码由调用方翻成人话：
+     nocite 没有任何访问记录（等于没真去读）／ empty 没拿到内容 ／ thin 内容太少不像正文 */
+async function fetchPageText(url, opts) {
+  const { apiKey, model, providerId, maxWords, hint } = opts;
+  const prompt = `请用网络搜索工具获取并阅读这个网页的内容：${url}
+${hint || ""}
+
+关于 content：
+- 只摘录你**实际读到**的原文，保持原文措辞，不要改写、不要总结
+- 尽量完整，上限 ${maxWords} 词；从开头连续往下取，不要东拼西凑
+- **实际读到多少就给多少。宁可只有两段，也绝不自己补写凑长度**
+
+只返回 JSON，不要任何其他文字或 markdown 代码块：
+{"title":"内容的英文标题","content":"提取的英文原文，段落用\\n\\n分隔"}
+
+如果实在无法获取该页面的英文内容，返回：{"error":"一句话中文原因"}`;
+  const data = await callClaude(prompt, apiKey, model, true, providerId);
+  if (data.error || !data.content) throw new Error("empty");
+  // 没有任何搜索引用 = 根本没去读这个页面，正文多半是编的
+  if (!(data.__cites || []).length) throw new Error("nocite");
+  if ((data.content.match(/[A-Za-z]/g) || []).length < 40) throw new Error("thin");
+  return { title: data.title || "", content: data.content };
+}
+
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return "网页"; }
 }
@@ -920,6 +977,15 @@ export default function App() {
   const [books, setBooks] = useState(() => sGet(BOOKS_KEY));
   const [booksBusy, setBooksBusy] = useState(false);
   const [booksErr, setBooksErr] = useState("");
+  const bookCacheRef = useRef(loadBookCache());
+  const [readBusy, setReadBusy] = useState("");   // 正在抓哪本（存 url）
+  const [readErr, setReadErr] = useState("");
+  // 只为了让界面知道哪些已经存了本地；正文本身在 bookCacheRef 里，不进 state
+  const [cachedBooks, setCachedBooks] = useState(() => {
+    const m = {};
+    for (const [k, v] of loadBookCache()) m[k] = v.words || 0;
+    return m;
+  });
 
   const [tabs, setTabs] = useState([]);                 // [{id,title,content,cn_intro,topic,level,woven[],imported,trans}]
   const [activeId, setActiveId] = useState(null);
@@ -1988,8 +2054,8 @@ ${curText}
     });
   }
 
-  async function importFromUrl() {
-    const url = impUrl.trim();
+  async function importFromUrl(rawUrl) {
+    const url = (typeof rawUrl === "string" ? rawUrl : impUrl).trim();
     if (!/^https?:\/\//i.test(url)) { setImpErr("请粘贴以 http(s):// 开头的完整网址"); return; }
     if (!providerOf(providerId).webSearch) {
       // 联网抓取依赖服务商提供搜索工具，目前只有 OpenRouter 支持；
@@ -2000,25 +2066,11 @@ ${curText}
     if (impBusy) return;
     setImpBusy(true);
     setImpErr("");
-    const prompt = `请用网络搜索工具获取并阅读这个网页的内容：${url}
-如果它是视频页面，请尽力找到其英文字幕、台词或内容简介。
-
-关于 content：
-- 只摘录你**实际读到**的原文，保持原文措辞，不要改写、不要总结
-- 尽量完整，上限 ${FETCH_WORDS} 词；从文章开头连续往下取，不要东拼西凑
-- **实际读到多少就给多少。宁可只有两段，也绝不自己补写凑长度**
-
-只返回 JSON，不要任何其他文字或 markdown 代码块：
-{"title":"内容的英文标题","content":"提取的英文原文，段落用\\n\\n分隔"}
-
-如果实在无法获取该页面的英文内容，返回：{"error":"一句话中文原因"}`;
     try {
-      const data = await callClaude(prompt, apiKey, model, true, providerId);
-      if (data.error || !data.content) throw new Error(data.error || "empty");
-      // 没有任何搜索引用 = 根本没去读这个页面，正文多半是编的
-      if (!(data.__cites || []).length) throw new Error("nocite");
-      const latin = (data.content.match(/[A-Za-z]/g) || []).length;
-      if (latin < 40) throw new Error("thin");
+      const data = await fetchPageText(url, {
+        apiKey, model, providerId, maxWords: FETCH_WORDS,
+        hint: "如果它是视频页面，请尽力找到其英文字幕、台词或内容简介。",
+      });
       const chs = splitChapters(data.content);
       finishImport({
         title: data.title || hostOf(url),
@@ -2128,19 +2180,29 @@ ${curText}
     setBooksBusy(true);
     setBooksErr("");
     const lv = LEVELS.find((l) => l.id === lvId) || LEVELS.find((l) => l.id === level) || LEVELS[1];
-    const prompt = `用网络搜索，找 5-8 本**真实出版**的英语学习教材，适合${lv.tag}（CEFR ${lv.id}）水平的中国学习者。
+    const prompt = `用网络搜索，找 5-8 份**正文可以合法免费读到全文**的英语学习材料，适合${lv.tag}（CEFR ${lv.id}）水平的中国学习者。
 
-要求：
-- 必须是你通过搜索**实际访问到的页面**上看到的书，不能凭记忆列举
-- 优先去有出版信息的页面找：出版社官网（Cambridge / Oxford / Pearson / Macmillan / 外语教学与研究出版社 / 上海外语教育出版社）、豆瓣读书
-- 每本书的 url 必须是**你实际读到这本书信息的那个页面**的完整 http(s) 网址，不要给搜索结果页
-- 只列确实查到的书。**宁可只给两本，也绝不凑数**——少几本不是问题，编造才是问题
+**最重要的一条：每一份都必须给出能直接读到英文正文的页面地址。**只给简介页、
+购买页、豆瓣条目、亚马逊页面的，一律不要——那些页面上没有正文，对学习者没用。
+
+正文来源只能是下面这几类（它们的全文是合法免费的）：
+- 公版读物：Project Gutenberg、Standard Ebooks
+- 开放许可教材：Open Textbook Library、OER Commons、OpenStax、BCcampus Open Textbooks
+- 官方免费学习材料：British Council LearnEnglish、VOA Learning English、BBC Learning English
+- 出版社官网公开的免费样章 / 试读单元
+
+绝对不要给盗版站、网盘链接、需要登录或付费才能看的页面。
+
+其余要求：
+- 必须是你通过搜索**实际访问到的页面**，不能凭记忆列举
+- url 必须是**正文所在的那一页**的完整 http(s) 网址，不是搜索结果页、不是目录首页
+- 只列你确实打开过、确实看到英文正文的。**宁可只给两份，也绝不凑数**
 - 不要给 ISBN
-- 类型可以是：综合教程、分级读物、语法专项、词汇专项、听说训练、备考用书
-- 尽量覆盖不同类型，别八本全是分级读物
+- 类型可以是：分级读物、经典读物、综合教程、语法专项、听说训练、开放教材
+- 尽量覆盖不同类型，别全是同一类
 
 只返回 JSON，不要任何其他文字或 markdown 代码块：
-{"books":[{"title":"书名原文","cn":"中文书名，没有就空字符串","author":"作者或编者，不确定就空字符串","publisher":"出版社","year":"出版年，不确定就空字符串","kind":"类型","why":"一句话中文说明它适合这个水平的哪一点，30 字以内","url":"https://你读到这本书信息的页面"}]}
+{"books":[{"title":"英文标题","cn":"中文名，没有就空字符串","author":"作者或编者，不确定就空字符串","publisher":"出版方/网站，如 Project Gutenberg / British Council","year":"年份，不确定就空字符串","kind":"类型","why":"一句话中文说明它适合这个水平的哪一点，30 字以内","url":"https://能直接读到英文正文的那一页"}]}
 
 如果搜不到可靠的，返回：{"error":"一句话中文原因"}`;
     try {
@@ -2193,6 +2255,75 @@ ${curText}
       );
     } finally {
       setBooksBusy(false);
+    }
+  }
+
+  /* 把一本教材的正文抓下来读。
+     和查词同一个套路：抓过一次就存本地，之后点开直接读——不再发请求、不再
+     花钱、离线也能读，也能当复习材料反复用。 */
+  async function readBook(b) {
+    if (readBusy) return;
+    const url = String((b && b.url) || "");
+    if (!/^https?:\/\//i.test(url)) { setReadErr("这本没有可读的正文地址"); return; }
+
+    const hit = bookCacheRef.current.get(url);
+    if (hit && (hit.chapters || []).length) {
+      finishImport({
+        title: hit.title, chapters: hit.chapters, ch: 0, trans: {},
+        srcUrl: url, srcSite: hit.site,
+        cn_intro: `本地已存的正文（约 ${hit.words} 词${hit.chapters.length > 1 ? `，${hit.chapters.length} 章` : ""}），没有重新联网`,
+        topic: hit.title, level, imported: true,
+      });
+      go("read");
+      return;
+    }
+
+    if (!providerOf(providerId).webSearch) {
+      setReadErr(`抓正文要靠服务商的联网能力，当前的 ${providerOf(providerId).name} 不支持。去设置里换成 OpenRouter`);
+      return;
+    }
+    setReadBusy(url);
+    setReadErr("");
+    try {
+      const data = await fetchPageText(url, {
+        apiKey, model, providerId, maxWords: BOOK_WORDS,
+        hint: "这是一份英语学习材料，请取它的正文课文部分，跳过网站导航、版权声明和目录。",
+      });
+      const chs = splitChapters(data.content);
+      const words = countWords(data.content);
+      const title = data.title || b.title || hostOf(url);
+      const site = hostOf(url);
+
+      // 先落盘再进阅读页：万一存储写满了，得当场告诉用户这次没存下来
+      bookCacheRef.current.set(url, { title, site, chapters: chs, words, at: Date.now() });
+      const { map, ok } = saveBookCache(bookCacheRef.current);
+      bookCacheRef.current = map;
+      const next = {};
+      for (const [k, v] of map) next[k] = v.words || 0;
+      setCachedBooks(next);
+      if (!ok) showToast("正文没能存下来（存储写满了），这次还能读");
+
+      finishImport({
+        title, chapters: chs, ch: 0, trans: {},
+        srcUrl: url, srcSite: site,
+        cn_intro: `抓自 ${site} 的正文原文，约 ${words} 词`
+          + (chs.length > 1 ? `，已分成 ${chs.length} 章` : "")
+          + (ok ? "。已存本地，下次点开不用再抓" : "。"),
+        topic: title, level, imported: true,
+      });
+      go("read");
+    } catch (e) {
+      setReadErr(
+        e.message === "nocite"
+          ? "没有真正打开这个页面（模型没返回任何访问记录），内容不可信，已放弃。可以点右边的来源链接自己看看这页还在不在"
+          : e.message === "thin"
+            ? "这页上没找到成段的英文正文——多半是目录页或者需要登录。点来源链接自己确认一下"
+            : e.message === "empty"
+              ? "抓不到这页的英文正文。点来源链接自己看看，或者复制正文用「导入自己的材料」"
+              : errText(e, providerId)
+      );
+    } finally {
+      setReadBusy("");
     }
   }
 
@@ -2587,6 +2718,10 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               webOk={providerOf(providerId).webSearch}
               providerName={providerOf(providerId).name}
               onSearch={fetchBooks}
+              onRead={readBook}
+              readBusy={readBusy}
+              readErr={readErr}
+              cached={cachedBooks}
               onGoSettings={() => go("settings")}
             />
           ) : view === "stats" ? (
@@ -4138,7 +4273,7 @@ function StatsView({ stats, streak, vocab = [], vocabCount, dueCount, level, onG
 /* ---------- 生词本 ---------- */
 
 /* ---- 教材推荐 ---- */
-function BooksView({ books, busy, err, curLevel, webOk, providerName, onSearch, onGoSettings }) {
+function BooksView({ books, busy, err, curLevel, webOk, providerName, onSearch, onRead, readBusy, readErr, cached, onGoSettings }) {
   // 只在本页选难度，不改全局设置——来看看别的水平有什么书，不该顺手把阅读难度也改了
   const [lv, setLv] = useState(books?.lv || curLevel);
   const cur = LEVELS.find((l) => l.id === lv) || LEVELS[1];
@@ -4171,26 +4306,33 @@ function BooksView({ books, busy, err, curLevel, webOk, providerName, onSearch, 
                 : <><Search size={15} /> {list.length ? "换一批" : "搜教材"}</>}
         </button>
       </div>
-      <p className="bk-hint">{cur.tag} · 找这个水平的正式出版教材</p>
+      <p className="bk-hint">{cur.tag} · 只找正文能合法免费读到全文的材料</p>
 
       <details className="bk-note">
-        <summary>怎么保证不是编的</summary>
+        <summary>这些是怎么来的、为什么点得开</summary>
         <p>
           搜索由服务商真正执行，返回里附带一份「实际访问过的网页」清单——这份清单是平台加的，
-          模型伪造不了。每一本书都必须能对上清单里的某个页面，对不上的整本丢掉、不显示。
-          所以下面每本书的来源链接都点得开，能自己核对。
+          模型伪造不了。每一份材料都必须能对上清单里的某个页面，对不上的整份丢掉、不显示。
         </p>
         <p>
-          不给 ISBN 是故意的：那是最容易被编、你又最难当场识破的字段，错一位就是另一本书。
+          只收正文合法免费的来源：公版读物（Project Gutenberg 等）、开放许可教材、
+          British Council 和 VOA 这类官方免费材料、出版社公开的免费样章。
+          《新概念》这类版权教材的正文不在网上合法流通，抓不到，也不去抓。
+        </p>
+        <p>
+          点「抓来读」会真去读那一页，把英文原文取回来分好章，<b>存在本地</b>，
+          然后进阅读页——和你自己导入的文章一样能点词查词、做小测。
+          存过之后再点就是直接打开，不再联网、不再花钱，离线也能读。
         </p>
       </details>
 
       {err && <div className="err">{err}</div>}
+      {readErr && <div className="err">{readErr}</div>}
 
       {list.length === 0 && !busy && !err && (
         <div className="vb-empty">
           <div className="dict-idle-mark">007</div>
-          <p>选个难度，点「搜教材」📚</p>
+          <p>选个难度，点「搜教材」——找到的都能直接抓下来读 📚</p>
         </div>
       )}
 
@@ -4208,9 +4350,21 @@ function BooksView({ books, busy, err, curLevel, webOk, providerName, onSearch, 
                   {[b.author, b.publisher, b.year].filter(Boolean).join(" · ") || "出版信息见来源页"}
                 </p>
                 {b.why && <p className="bk-why">{b.why}</p>}
-                <a className="bk-src" href={b.url} target="_blank" rel="noreferrer">
-                  <ExternalLink size={12} /> {b.site}
-                </a>
+                {cached[b.url] > 0 && (
+                  <p className="bk-saved"><Check size={12} /> 已存本地 · 约 {cached[b.url]} 词 · 离线也能读</p>
+                )}
+                <div className="bk-acts">
+                  <button className="btn-pri small" onClick={() => onRead(b)} disabled={!!readBusy}>
+                    {readBusy === b.url
+                      ? <><Loader2 size={14} className="spin" /> 抓取中…</>
+                      : cached[b.url] > 0
+                        ? <><BookOpen size={14} /> 读这本</>
+                        : <><Download size={14} /> 抓来读</>}
+                  </button>
+                  <a className="bk-src" href={b.url} target="_blank" rel="noreferrer">
+                    <ExternalLink size={12} /> {b.site}
+                  </a>
+                </div>
               </div>
             ))}
           </div>
@@ -5071,8 +5225,10 @@ button:disabled{opacity:.55;cursor:default}
 .bk-meta{margin-top:9px;font-size:12.5px;color:var(--mut);line-height:1.5}
 .bk-why{margin-top:10px;font-size:13px;color:var(--ink2);line-height:1.6;
   border-left:2px solid var(--line);padding-left:9px}
-.bk-src{margin-top:auto;padding-top:12px;font-size:12px;color:var(--mut);
-  display:inline-flex;align-items:center;gap:5px;align-self:flex-start}
+.bk-saved{margin-top:10px;font-size:12px;color:var(--ok);
+  display:inline-flex;align-items:center;gap:5px}
+.bk-acts{margin-top:auto;padding-top:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.bk-src{font-size:12px;color:var(--mut);display:inline-flex;align-items:center;gap:5px}
 .bk-src:hover{color:var(--blue);text-decoration:underline}
 .bk-foot{margin-top:18px;font-size:12px;color:var(--mut);line-height:1.7}
 .bk-cites{margin-top:6px}
