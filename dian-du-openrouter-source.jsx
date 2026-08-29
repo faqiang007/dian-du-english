@@ -4337,18 +4337,72 @@ function BooksView({ books, busy, err, curLevel, onLoad, onRead, readBusy, readE
   );
 }
 
+/* ---- 生词本 ----
+   原来是卡片网格，每张卡把音标、三条释义、一个例句全摊开。词少时好看，
+   过百之后就是一堵墙：一屏只放得下六张卡，没法搜、没有次序、想找某个词
+   只能一路翻。
+
+   改成可展开的紧凑列表：一行一词，点开才看详情。信息一条没少，只是默认收起。 */
+
+function vbWord(d) { return d.type === "en" ? d.word : d.input; }
+function vbPhon(d) {
+  return d.type === "en" ? d.phonetic_us : (((d.translations || [])[0]) || {}).phonetic_us;
+}
+function vbBrief(d) {
+  if (d.type === "en") {
+    const s = (d.senses || [])[0];
+    return s ? ((s.pos ? s.pos + " " : "") + (s.cn || "")) : "";
+  }
+  return ((d.translations || []).map((t) => t.en).join(" / ")) || "";
+}
+function vbHay(d) {
+  // 搜索要能用中文释义命中，不能只匹配单词本身
+  const parts = [vbWord(d)];
+  if (d.type === "en") {
+    for (const x of d.senses || []) parts.push(x.cn, x.pos);
+  } else {
+    for (const t of d.translations || []) parts.push(t.en, t.pos);
+  }
+  return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
 function VocabView({ vocab, dueCount, onStartReview, onSpeak, onRemove, onCopy, onDownload, vImpOpen, setVImpOpen, vImpText, setVImpText, onVImport, confirmClear, setConfirmClear, onClear, onLookup }) {
   const [menu, setMenu] = useState(false);
+  const [q, setQ] = useState("");
+  const [openKey, setOpenKey] = useState(null);
+  // 已掌握的词本来就不用天天看，默认折起来，第一屏留给真正要复习的
+  const [fold, setFold] = useState({ done: true });
+
+  const groups = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    const hit = kw ? vocab.filter((v) => vbHay(v.data).includes(kw)) : vocab;
+    const now = Date.now();
+    const due = [], learn = [], done = [];
+    for (const v of hit) {
+      if (rvOf(v).due <= now) due.push(v);
+      else if (isMastered(v)) done.push(v);
+      else learn.push(v);
+    }
+    due.sort((a, b) => rvOf(a).due - rvOf(b).due);
+    const recent = (a, b) => (b.savedAt || 0) - (a.savedAt || 0);
+    learn.sort(recent);
+    done.sort(recent);
+    return [
+      { id: "due", name: "待复习", items: due },
+      { id: "learn", name: "学习中", items: learn },
+      { id: "done", name: "已掌握", items: done },
+    ];
+  }, [vocab, q]);
+
+  const shown = groups.reduce((n, g) => n + g.items.length, 0);
+
   return (
     <div className="vocab">
       <div className="vb-head">
         <h2 className="vb-t"><BookOpen size={19} /> 生词本 <span className="vb-n">{vocab.length}</span></h2>
         <div className="vb-acts">
           {vocab.length > 0 && (
-            <button
-              className={dueCount ? "btn-pri small" : "btn-gh"}
-              onClick={onStartReview}
-            >
+            <button className={dueCount ? "btn-pri small" : "btn-gh"} onClick={onStartReview}>
               <Brain size={14} /> {dueCount ? `开始复习 · ${dueCount}` : "今日无待复习"}
             </button>
           )}
@@ -4413,60 +4467,99 @@ function VocabView({ vocab, dueCount, onStartReview, onSpeak, onRemove, onCopy, 
           <p className="mut">读文章时点击单词，或在顶部搜索，然后点「加入生词本」。</p>
         </div>
       ) : (
-        <div className="vb-list">
-          {vocab.map((v) => {
-            const d = v.data;
-            const r = rvOf(v);
+        <>
+          <div className="vb-search">
+            <Search size={14} />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="搜单词或中文释义"
+            />
+            {q && <button className="vb-clr" onClick={() => setQ("")} aria-label="清空"><X size={13} /></button>}
+          </div>
+
+          {q && shown === 0 && (
+            <div className="vb-empty"><p>没有匹配「{q}」的词</p></div>
+          )}
+
+          {groups.map((g) => {
+            if (!g.items.length) return null;
+            // 搜索时一律展开，否则搜出来的东西藏在折叠组里等于没搜
+            const folded = q ? false : !!fold[g.id];
             return (
-              <div className="vb-card" key={v.key}>
-                <button className="vb-x" onClick={() => onRemove(v.key)} aria-label="移除">
-                  <X size={14} />
+              <div className="vb-grp" key={g.id}>
+                <button className="vb-grp-h" onClick={() => setFold((f) => ({ ...f, [g.id]: !f[g.id] }))}>
+                  <ChevronDown size={14} className={folded ? "flip-r" : ""} />
+                  <b className={g.id === "due" ? "hot" : g.id === "done" ? "ok" : ""}>{g.name}</b>
+                  <span className="vb-grp-n">{g.items.length}</span>
                 </button>
-                {d.type === "en" ? (
-                  <>
-                    <div className="vb-word">
-                      <button className="vb-w" onClick={() => onLookup(d.word)}>{d.word}</button>
-                      {d.phonetic_us && <span className="tr-ph">{d.phonetic_us}</span>}
-                      <button className="ex-sp" onClick={() => onSpeak(d.word, "en-US")} aria-label="发音">
-                        <Volume2 size={12} />
-                      </button>
-                    </div>
-                    <ul className="senses tight">
-                      {(d.senses || []).slice(0, 3).map((s, i) => (
-                        <li key={i}><i className="pos">{s.pos}</i><span>{s.cn}</span></li>
-                      ))}
-                    </ul>
-                    {d.examples?.[0] && (
-                      <p className="vb-ex">
-                        <Boldify text={d.examples[0].en} word={d.word} />
-                        <span className="vb-ex-cn"> — {d.examples[0].cn}</span>
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <div className="vb-word"><span className="vb-w">{d.input}</span></div>
-                    {(d.translations || []).map((t, i) => (
-                      <div className="vb-tr" key={i}>
-                        <span className="serif"><b>{t.en}</b></span>
-                        {t.phonetic_us && <span className="tr-ph">{t.phonetic_us}</span>}
-                        <button className="ex-sp" onClick={() => onSpeak(t.en, "en-US")} aria-label="发音">
-                          <Volume2 size={12} />
-                        </button>
-                        {t.pos && <i className="pos">{t.pos}</i>}
-                      </div>
-                    ))}
-                  </>
+                {!folded && (
+                  <div className="vb-rows">
+                    {g.items.map((v) => {
+                      const d = v.data;
+                      const r = rvOf(v);
+                      const on = openKey === v.key;
+                      const ph = vbPhon(d);
+                      return (
+                        <div className={on ? "vb-row on" : "vb-row"} key={v.key}>
+                          <button className="vb-rmain" onClick={() => setOpenKey(on ? null : v.key)}>
+                            <span className="vb-rw">{vbWord(d)}</span>
+                            {ph && <span className="vb-rph">{ph}</span>}
+                            <span className="vb-rbrief">{vbBrief(d)}</span>
+                          </button>
+                          <button className="vb-rsp" onClick={() => onSpeak(d.type === "en" ? d.word : ((d.translations || [])[0] || {}).en || d.input, "en-US")} aria-label="发音">
+                            <Volume2 size={13} />
+                          </button>
+                          <button className="vb-rx" onClick={() => onRemove(v.key)} aria-label="移除">
+                            <X size={13} />
+                          </button>
+                          {on && (
+                            <div className="vb-det">
+                              {d.type === "en" ? (
+                                <>
+                                  <ul className="senses tight">
+                                    {(d.senses || []).map((x, i) => (
+                                      <li key={i}><i className="pos">{x.pos}</i><span>{x.cn}</span></li>
+                                    ))}
+                                  </ul>
+                                  {(d.examples || []).slice(0, 2).map((ex, i) => (
+                                    <p className="vb-ex" key={i}>
+                                      <Boldify text={ex.en} word={d.word} />
+                                      <span className="vb-ex-cn"> — {ex.cn}</span>
+                                    </p>
+                                  ))}
+                                </>
+                              ) : (
+                                (d.translations || []).map((t, i) => (
+                                  <div className="vb-tr" key={i}>
+                                    <span className="serif"><b>{t.en}</b></span>
+                                    {t.phonetic_us && <span className="tr-ph">{t.phonetic_us}</span>}
+                                    <button className="ex-sp" onClick={() => onSpeak(t.en, "en-US")} aria-label="发音">
+                                      <Volume2 size={12} />
+                                    </button>
+                                    {t.pos && <i className="pos">{t.pos}</i>}
+                                  </div>
+                                ))
+                              )}
+                              <div className="vb-meta">
+                                {r.due <= Date.now()
+                                  ? <span className="due">待复习</span>
+                                  : <span className="mut">连对 {r.streak} 次 · 见过 {v.meet || 1} 次</span>}
+                                <button className="vb-look" onClick={() => onLookup(vbWord(d))}>
+                                  <Search size={12} /> 重新查这个词
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
-                <div className="vb-meta">
-                  {r.due <= Date.now()
-                    ? <span className="due">待复习</span>
-                    : <span className="mut">连对 {r.streak} 次 · 见过 {v.meet || 1} 次</span>}
-                </div>
               </div>
             );
           })}
-        </div>
+        </>
       )}
     </div>
   );
@@ -5196,6 +5289,54 @@ button:disabled{opacity:.55;cursor:default}
 .btn-danger{font-size:13px;background:#B5432F;color:#fff;border-radius:9px;padding:7px 12px}
 .vb-empty{text-align:center;padding:70px 20px;color:var(--ink2);font-size:15px}
 .vb-empty p{margin-top:12px}
+/* 生词本改成紧凑列表：一行一词，点开才展开详情。
+   .vb-list / .vb-card 是旧的卡片网格，复习页还在用，留着。 */
+.vb-search{display:flex;align-items:center;gap:8px;margin:0 0 16px;padding:9px 13px;
+  background:var(--card);border:1px solid var(--line);border-radius:10px;color:var(--mut)}
+.vb-search:focus-within{border-color:var(--blue)}
+.vb-search input{flex:1;border:0;outline:0;background:transparent;font-size:14.5px;
+  color:var(--ink);font-family:var(--sans)}
+.vb-search input::placeholder{color:var(--mut)}
+.vb-clr{color:var(--mut);padding:2px;border-radius:5px}
+.vb-clr:hover{background:var(--line2);color:var(--ink)}
+
+.vb-grp{margin-bottom:18px}
+.vb-grp-h{display:flex;align-items:center;gap:7px;width:100%;padding:5px 2px;
+  color:var(--ink2);font-size:13.5px}
+.vb-grp-h b{font-weight:700;color:var(--ink)}
+.vb-grp-h b.hot{color:var(--hi-hot)}
+.vb-grp-h b.ok{color:var(--ok)}
+.vb-grp-n{font-size:11.5px;font-weight:700;color:var(--mut);background:var(--line2);
+  border-radius:99px;padding:1px 8px}
+.vb-grp-h .flip-r{transform:rotate(-90deg)}
+.vb-grp-h svg{transition:transform .16s ease;color:var(--mut);flex:none}
+
+.vb-rows{margin-top:6px;border:1px solid var(--line);border-radius:11px;overflow:hidden;
+  background:var(--card)}
+.vb-row{position:relative;display:flex;align-items:center;flex-wrap:wrap;
+  border-top:1px solid var(--line2)}
+.vb-row:first-child{border-top:0}
+.vb-row:hover{background:var(--line2)}
+.vb-row.on{background:var(--line2)}
+.vb-rmain{flex:1;min-width:0;display:flex;align-items:baseline;gap:9px;
+  padding:11px 4px 11px 14px;text-align:left}
+.vb-rw{font-size:15.5px;font-weight:700;color:var(--ink);flex:none}
+.vb-row.on .vb-rw,.vb-rmain:hover .vb-rw{color:var(--blue)}
+.vb-rph{font-size:11.5px;color:var(--mut);flex:none;font-family:var(--sans)}
+.vb-rbrief{font-size:13px;color:var(--ink2);flex:1;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vb-rsp,.vb-rx{flex:none;color:var(--mut);padding:6px;border-radius:6px;margin-right:2px}
+.vb-rx{margin-right:8px}
+.vb-rsp:hover{background:var(--card);color:var(--blue)}
+.vb-rx:hover{background:var(--bad-bg);color:var(--bad)}
+.vb-det{flex-basis:100%;padding:2px 14px 14px;border-top:1px dashed var(--line)}
+.vb-det .senses{margin-top:10px}
+.vb-det .vb-ex{margin-top:9px}
+.vb-det .vb-meta{display:flex;align-items:center;gap:10px}
+.vb-look{margin-left:auto;font-size:11.5px;color:var(--mut);
+  display:inline-flex;align-items:center;gap:4px}
+.vb-look:hover{color:var(--blue)}
+
 .vb-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px}
 .vb-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;
   padding:16px 16px 12px;box-shadow:var(--sh)}
