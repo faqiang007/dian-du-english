@@ -2433,10 +2433,9 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
           <Settings size={16} /> 设置
         </button>
 
-        {(streak > 0 || (stats.total || 0) > 0) && (
+        {streak > 0 && (
           <div className="sfoot">
             <b><Flame size={13} /> 连续学习 {streak} 天</b>
-            <span>今天读了 {(stats.log[dateStr()] || {}).a || 0} 篇 · 累计 {stats.total || 0} 篇</span>
           </div>
         )}
       </aside>
@@ -3974,10 +3973,6 @@ function StatsView({ stats, streak, vocab = [], vocabCount, dueCount, level, onG
             <div className="st-card">
               <span className="st-n"><Flame size={17} /> {streak}</span>
               <span className="st-l">连续天数</span>
-            </div>
-            <div className="st-card">
-              <span className="st-n">{stats.total || 0}</span>
-              <span className="st-l">累计文章</span>
             </div>
             <div className="st-card">
               <span className="st-n">{learning}</span>
