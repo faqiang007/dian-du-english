@@ -43,7 +43,7 @@ import {
   ChevronLeft, ChevronRight, RotateCcw, Turtle, Flame,
   Languages, Upload, Download, FileUp, ChevronDown, MoreHorizontal,
   KeyRound, Settings, Bookmark, Menu, Globe, ExternalLink,
-  MessagesSquare, Send, CornerDownLeft
+  MessagesSquare, Send, CornerDownLeft, GraduationCap
 } from "lucide-react";
 import mammoth from "mammoth";
 import { unzipSync, strFromU8 } from "fflate";
@@ -182,6 +182,9 @@ const SCENES = [
   { id: "hotel", label: "酒店入住", icon: "🏨", role: "酒店前台", goal: "办理入住：确认预订、房型、早餐和退房时间" },
   { id: "chat", label: "随便聊聊", icon: "💬", role: "同龄的外国朋友", goal: "从学习者的近况聊起，自然地把话题延续下去" },
 ];
+
+/* 教材书单落盘。搜一次要真联网、要花钱，结果留着，下次打开还在。 */
+const BOOKS_KEY = "dd-books-v1";
 
 const HISTORY_KEY = "dd-history-v1";
 const HISTORY_MAX = 20;
@@ -913,6 +916,10 @@ export default function App() {
   const [chips, setChips] = useState(() => pickChips(TOPIC_CATS[0].pool));
   const [realBusy, setRealBusy] = useState(false);
   const [realErr, setRealErr] = useState("");
+  // {lv, at, list[], dropped, cites[]}；null = 还没搜过
+  const [books, setBooks] = useState(() => sGet(BOOKS_KEY));
+  const [booksBusy, setBooksBusy] = useState(false);
+  const [booksErr, setBooksErr] = useState("");
 
   const [tabs, setTabs] = useState([]);                 // [{id,title,content,cn_intro,topic,level,woven[],imported,trans}]
   const [activeId, setActiveId] = useState(null);
@@ -2105,6 +2112,90 @@ ${curText}
     }
   }
 
+  /* 按难度联网找**真实出版**的教材。
+     和「AI 现写文章」的根本区别：这里每一本都必须能对上一个搜索引擎真正访问过的
+     页面，对不上的整本丢掉。模型编书名的能力和编网址一样强，只看它自己怎么说是
+     挡不住的。
+
+     不要 ISBN：那是最容易编、你又最难当场识破的字段，错一位就是另一本书。
+     给一个点开就能核对的来源链接，比给一串数字有用。 */
+  async function fetchBooks(lvId) {
+    if (booksBusy) return;
+    if (!providerOf(providerId).webSearch) {
+      setBooksErr(`找教材要靠服务商的联网搜索，当前的 ${providerOf(providerId).name} 不支持。去设置里换成 OpenRouter——不联网的话模型只会凭记忆编书名，那正是这个功能要避免的`);
+      return;
+    }
+    setBooksBusy(true);
+    setBooksErr("");
+    const lv = LEVELS.find((l) => l.id === lvId) || LEVELS.find((l) => l.id === level) || LEVELS[1];
+    const prompt = `用网络搜索，找 5-8 本**真实出版**的英语学习教材，适合${lv.tag}（CEFR ${lv.id}）水平的中国学习者。
+
+要求：
+- 必须是你通过搜索**实际访问到的页面**上看到的书，不能凭记忆列举
+- 优先去有出版信息的页面找：出版社官网（Cambridge / Oxford / Pearson / Macmillan / 外语教学与研究出版社 / 上海外语教育出版社）、豆瓣读书
+- 每本书的 url 必须是**你实际读到这本书信息的那个页面**的完整 http(s) 网址，不要给搜索结果页
+- 只列确实查到的书。**宁可只给两本，也绝不凑数**——少几本不是问题，编造才是问题
+- 不要给 ISBN
+- 类型可以是：综合教程、分级读物、语法专项、词汇专项、听说训练、备考用书
+- 尽量覆盖不同类型，别八本全是分级读物
+
+只返回 JSON，不要任何其他文字或 markdown 代码块：
+{"books":[{"title":"书名原文","cn":"中文书名，没有就空字符串","author":"作者或编者，不确定就空字符串","publisher":"出版社","year":"出版年，不确定就空字符串","kind":"类型","why":"一句话中文说明它适合这个水平的哪一点，30 字以内","url":"https://你读到这本书信息的页面"}]}
+
+如果搜不到可靠的，返回：{"error":"一句话中文原因"}`;
+    try {
+      const data = await callClaude(prompt, apiKey, model, true, providerId);
+      const cites = data.__cites || [];
+      // 一条引用都没有 = 这次压根没真联网，后面怎么核对都是自欺欺人
+      if (!cites.length) throw new Error("nocite");
+      const raw = Array.isArray(data.books) ? data.books : [];
+      if (data.error || !raw.length) throw new Error("empty");
+
+      const kept = [];
+      for (const b of raw) {
+        if (!b || !b.title) continue;
+        const said = String(b.url || "");
+        if (!/^https?:\/\//i.test(said)) continue;   // 连网址都没给，无从核对
+        // 先按整条网址对，对不上再退一步按域名对（出版社页面常带跳转参数）
+        const hit = cites.find((c) => c.url === said)
+          || cites.find((c) => hostOf(c.url) === hostOf(said));
+        if (!hit) continue;
+        kept.push({
+          title: String(b.title).slice(0, 120),
+          cn: String(b.cn || "").slice(0, 60),
+          author: String(b.author || "").slice(0, 80),
+          publisher: String(b.publisher || "").slice(0, 60),
+          year: String(b.year || "").slice(0, 12),
+          kind: String(b.kind || "").slice(0, 20),
+          why: String(b.why || "").slice(0, 80),
+          url: hit.url,
+          site: hostOf(hit.url),
+        });
+      }
+      if (!kept.length) throw new Error("allfake");
+
+      const next = {
+        lv: lv.id, at: Date.now(), list: kept,
+        dropped: raw.length - kept.length,
+        cites: cites.map((c) => ({ url: c.url, title: c.title || hostOf(c.url) })),
+      };
+      setBooks(next);
+      if (!sSet(BOOKS_KEY, next)) showToast("书单没能存下来（存储写满了），这次的还能看");
+    } catch (e) {
+      setBooksErr(
+        e.message === "nocite"
+          ? "这次没有真正联网搜索（没拿到任何搜索结果），拿不到可核对的出处，不予采用。再点一次试试；一直这样就检查服务商是否支持联网"
+          : e.message === "allfake"
+            ? "搜到的书没有一本能和实际访问过的页面对上，全部丢弃了——这种情况多半是模型在凭记忆编。换个难度或者过一会儿再试"
+            : e.message === "empty"
+              ? "这个难度没搜到合适的教材，换个难度试试"
+              : errText(e, providerId)
+      );
+    } finally {
+      setBooksBusy(false);
+    }
+  }
+
   async function handleImportFile(e) {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -2396,6 +2487,9 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
           <button className={view === "talk" ? "sl on" : "sl"} onClick={() => go("talk")}>
             <MessagesSquare size={16} /> 对话
           </button>
+          <button className={view === "books" ? "sl on" : "sl"} onClick={() => go("books")}>
+            <GraduationCap size={16} /> 教材
+          </button>
           <button className={view === "stats" ? "sl on" : "sl"} onClick={() => go("stats")}>
             <BarChart3 size={16} /> 统计
           </button>
@@ -2483,6 +2577,17 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               onExit={exitTalk}
               onSetDraft={(v) => setTalk((s) => ({ ...s, draft: v }))}
               onSpeak={speak}
+            />
+          ) : view === "books" ? (
+            <BooksView
+              books={books}
+              busy={booksBusy}
+              err={booksErr}
+              curLevel={level}
+              webOk={providerOf(providerId).webSearch}
+              providerName={providerOf(providerId).name}
+              onSearch={fetchBooks}
+              onGoSettings={() => go("settings")}
             />
           ) : view === "stats" ? (
             <StatsView
@@ -4032,6 +4137,108 @@ function StatsView({ stats, streak, vocab = [], vocabCount, dueCount, level, onG
 
 /* ---------- 生词本 ---------- */
 
+/* ---- 教材推荐 ---- */
+function BooksView({ books, busy, err, curLevel, webOk, providerName, onSearch, onGoSettings }) {
+  // 只在本页选难度，不改全局设置——来看看别的水平有什么书，不该顺手把阅读难度也改了
+  const [lv, setLv] = useState(books?.lv || curLevel);
+  const cur = LEVELS.find((l) => l.id === lv) || LEVELS[1];
+  const list = books?.list || [];
+
+  return (
+    <div className="books">
+      <div className="vb-head">
+        <h2 className="vb-t"><GraduationCap size={19} /> 教材推荐</h2>
+        {list.length > 0 && <span className="vb-n">{list.length} 本</span>}
+      </div>
+
+      {!webOk && (
+        <div className="genwarn">
+          当前服务商 <b>{providerName}</b> 不支持联网搜索，找不了教材。
+          去<button className="lnk" onClick={onGoSettings}>设置</button>换成 OpenRouter 即可。
+        </div>
+      )}
+
+      <div className="bk-bar">
+        <span className="ai-l">难度</span>
+        <div className="ai-chips">
+          {LEVELS.map((l) => (
+            <button key={l.id} className={l.id === lv ? "lvt on" : "lvt"}
+              onClick={() => setLv(l.id)}>{l.label}</button>
+          ))}
+        </div>
+        <button className="btn-pri small bk-go" onClick={() => onSearch(lv)} disabled={busy || !webOk}>
+          {busy ? <><Loader2 size={15} className="spin" /> 正在联网搜…</>
+                : <><Search size={15} /> {list.length ? "换一批" : "搜教材"}</>}
+        </button>
+      </div>
+      <p className="bk-hint">{cur.tag} · 找这个水平的正式出版教材</p>
+
+      <details className="bk-note">
+        <summary>怎么保证不是编的</summary>
+        <p>
+          搜索由服务商真正执行，返回里附带一份「实际访问过的网页」清单——这份清单是平台加的，
+          模型伪造不了。每一本书都必须能对上清单里的某个页面，对不上的整本丢掉、不显示。
+          所以下面每本书的来源链接都点得开，能自己核对。
+        </p>
+        <p>
+          不给 ISBN 是故意的：那是最容易被编、你又最难当场识破的字段，错一位就是另一本书。
+        </p>
+      </details>
+
+      {err && <div className="err">{err}</div>}
+
+      {list.length === 0 && !busy && !err && (
+        <div className="vb-empty">
+          <div className="dict-idle-mark">007</div>
+          <p>选个难度，点「搜教材」📚</p>
+        </div>
+      )}
+
+      {list.length > 0 && (
+        <>
+          <div className="bk-list">
+            {list.map((b, i) => (
+              <div className="bk-card" key={i}>
+                <div className="bk-top">
+                  <h3 className="bk-t">{b.title}</h3>
+                  {b.kind && <span className="bk-kind">{b.kind}</span>}
+                </div>
+                {b.cn && <p className="bk-cn">{b.cn}</p>}
+                <p className="bk-meta">
+                  {[b.author, b.publisher, b.year].filter(Boolean).join(" · ") || "出版信息见来源页"}
+                </p>
+                {b.why && <p className="bk-why">{b.why}</p>}
+                <a className="bk-src" href={b.url} target="_blank" rel="noreferrer">
+                  <ExternalLink size={12} /> {b.site}
+                </a>
+              </div>
+            ))}
+          </div>
+
+          <div className="bk-foot">
+            <span>
+              {LEVELS.find((l) => l.id === books.lv)?.tag} · 本次搜索实际访问了 {(books.cites || []).length} 个页面
+              {books.dropped > 0 && ` · 另有 ${books.dropped} 本对不上出处，已丢弃`}
+            </span>
+            {(books.cites || []).length > 0 && (
+              <details className="bk-cites">
+                <summary>看访问过的页面</summary>
+                <ul>
+                  {books.cites.map((c, i) => (
+                    <li key={i}>
+                      <a href={c.url} target="_blank" rel="noreferrer">{c.title}</a>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function VocabView({ vocab, dueCount, onStartReview, onSpeak, onRemove, onCopy, onDownload, vImpOpen, setVImpOpen, vImpText, setVImpText, onVImport, confirmClear, setConfirmClear, onClear, onLookup }) {
   const [menu, setMenu] = useState(false);
   return (
@@ -4838,6 +5045,42 @@ button:disabled{opacity:.55;cursor:default}
 .bar.today{background:var(--hi-hot)}
 .bar-l{font-size:10px;color:var(--mut);height:12px}
 .st-lv{margin-top:18px;font-size:13.5px;color:var(--ink2)}
+
+/* ---- 教材推荐 ---- */
+.books{padding-top:6px}
+.bk-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px}
+.bk-go{margin-left:auto}
+.bk-hint{margin-top:8px;font-size:12.5px;color:var(--mut)}
+.bk-note{margin-top:14px;font-size:12.5px;color:var(--ink2);line-height:1.65}
+.bk-note summary{cursor:pointer;color:var(--mut);font-size:12.5px;
+  display:inline-flex;align-items:center;gap:5px;list-style:none}
+.bk-note summary::-webkit-details-marker{display:none}
+.bk-note summary::before{content:"?";display:inline-flex;align-items:center;justify-content:center;
+  width:15px;height:15px;border-radius:99px;background:var(--line2);font-size:10px;font-weight:800}
+.bk-note summary:hover{color:var(--ink)}
+.bk-note p{margin-top:9px;padding-left:20px}
+.bk-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-top:18px}
+.bk-card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);
+  border-radius:12px;padding:16px;box-shadow:var(--sh)}
+.bk-top{display:flex;align-items:flex-start;gap:8px}
+.bk-t{font-family:var(--serif);font-size:16.5px;font-weight:700;line-height:1.35;
+  color:var(--ink);letter-spacing:-.2px;flex:1}
+.bk-kind{flex:none;margin-top:2px;font-size:11px;font-weight:700;white-space:nowrap;
+  background:var(--blue-bg);color:var(--blue);border-radius:99px;padding:2px 9px}
+.bk-cn{margin-top:5px;font-size:13.5px;color:var(--ink2)}
+.bk-meta{margin-top:9px;font-size:12.5px;color:var(--mut);line-height:1.5}
+.bk-why{margin-top:10px;font-size:13px;color:var(--ink2);line-height:1.6;
+  border-left:2px solid var(--line);padding-left:9px}
+.bk-src{margin-top:auto;padding-top:12px;font-size:12px;color:var(--mut);
+  display:inline-flex;align-items:center;gap:5px;align-self:flex-start}
+.bk-src:hover{color:var(--blue);text-decoration:underline}
+.bk-foot{margin-top:18px;font-size:12px;color:var(--mut);line-height:1.7}
+.bk-cites{margin-top:6px}
+.bk-cites summary{cursor:pointer;color:var(--mut)}
+.bk-cites summary:hover{color:var(--ink)}
+.bk-cites ul{margin-top:7px;padding-left:18px;display:grid;gap:4px}
+.bk-cites a{color:var(--ink2);text-decoration:underline;text-underline-offset:2px}
+.bk-cites a:hover{color:var(--blue)}
 
 /* ---- 生词本 ---- */
 .vb-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
