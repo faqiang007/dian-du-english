@@ -3990,6 +3990,14 @@ function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onExit, onRead }) {
                     <li key={i}><i className="pos">{s.pos}</i><span>{s.cn}</span></li>
                   ))}
                 </ul>
+                {/* 只放在翻面之后。放正面等于直接把答案给出去了，
+                    这张卡的规矩是「先回想、再对答案」。 */}
+                {d.tech_cn && (
+                  <div className="ctx tech fc-tech">
+                    <span className="ctx-l tech-l">计算机</span>
+                    {d.tech_cn}
+                  </div>
+                )}
                 {d.examples?.[0] && (
                   <p className="vb-ex" style={{ marginTop: 10 }}>
                     <Boldify text={d.examples[0].en} word={d.word} />
@@ -5354,6 +5362,7 @@ button:disabled{opacity:.55;cursor:default}
 /* 不展开也要能一眼看出哪些词有计算机含义 */
 .vb-rtech{flex:none;font-size:10.5px;font-weight:700;color:var(--card);background:var(--blue);
   border-radius:5px;padding:1px 6px;letter-spacing:.2px}
+.fc-tech{margin-top:12px;text-align:left}
 .vb-look{margin-left:auto;font-size:11.5px;color:var(--mut);
   display:inline-flex;align-items:center;gap:4px}
 .vb-look:hover{color:var(--blue)}
