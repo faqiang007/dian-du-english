@@ -183,9 +183,6 @@ const SCENES = [
   { id: "chat", label: "随便聊聊", icon: "💬", role: "同龄的外国朋友", goal: "从学习者的近况聊起，自然地把话题延续下去" },
 ];
 
-/* 教材书单落盘。搜一次要真联网、要花钱，结果留着，下次打开还在。 */
-const BOOKS_KEY = "dd-books-v1";
-
 const HISTORY_KEY = "dd-history-v1";
 const HISTORY_MAX = 20;
 const HISTORY_CHARS = 400000;
@@ -562,35 +559,28 @@ const DICT_CACHE_MAX = 400;
 const BOOK_CACHE_KEY = "dd-book-cache-v1";
 const BOOK_CACHE_MAX = 20;
 const BOOK_CACHE_CHARS = 300000;
-/* ---- 三个书架 ----
-   都是维基基金会的官方站点，接口都带 Access-Control-Allow-Origin: *，
-   浏览器（包括 file:// 打开的页面，来源是 null）能直接取。
+/* ---- 教材语料库 ----
+   语料是本仓库自带的（教材/索引.json + 教材/篇目/*.json，由 工具/建教材库.py
+   生成），通过 jsDelivr 发给前端。
 
-   为什么是这三家而不是 British Council / VOA / Gutenberg：那些站不放行跨域，
-   浏览器取不到，只能让模型转述，而模型的联网插件是**搜索**不是抓取，
-   给回来的只有搜索摘要，不是正文——这就是上一版「抓不到教材」的根因。
+   为什么不实时抓第三方网站：纯前端取正文只能靠浏览器 fetch，于是同时被两个
+   条件卡死——国内能直连的站（古登堡、OpenStax、中国日报）不放行跨域；放行
+   跨域的站（维基百科系）在国内连不上。两边没有交集，这条路是死的。
 
-   走官方接口的额外好处：找和取全程没有模型参与，内容不可能是编的，也不花钱。 */
-const SHELVES = [
-  { id: "simple", host: "simple.wikipedia.org", name: "简易英文", kind: "简易科普",
-    lv: ["A2", "B1", "B2"],
-    hint: "受控词汇写的百科，句子短、生词少",
-    seeds: ["animals", "food", "weather", "school", "sport", "music", "space",
-            "electricity", "the human body", "money", "transport", "the internet"] },
-  { id: "books", host: "en.wikibooks.org", name: "开放教材", kind: "开放教材",
-    lv: ["A2", "B1", "B2", "C1", "C2"],
-    hint: "Wikibooks 上的免费教程，含 ESL 专门教材",
-    seeds: ["English as an Additional Language", "English in Use",
-            "English grammar", "Basic English", "English pronunciation"] },
-  { id: "source", host: "en.wikisource.org", name: "公版读物", kind: "公版读物",
-    lv: ["B1", "B2", "C1", "C2"],
-    hint: "版权已过期的原著，寓言、短篇、经典小说",
-    seeds: ["Aesop fables", "short stories", "Alice's Adventures in Wonderland chapter",
-            "Grimm fairy tales", "Sherlock Holmes adventure", "The Jungle Book chapter"] },
-];
-/* 搜索结果里词数低于这个数的基本都是目录页/消歧义页，点开没正文。
-   实测：目录页普遍在 200 词以下，成篇的文章和章节都在 300 词以上。 */
-const MIN_WORDS = 250;
+   jsDelivr 两个条件同时满足：实测国内不走代理 HTTP 200，且回
+   access-control-allow-origin: *。中文路径也实测可用。
+
+   以后自己上线了，把 LIB_BASE 换成自己域名下的同一份文件即可，连 jsDelivr
+   也不用依赖。 */
+const LIB_BASE = "https://cdn.jsdelivr.net/gh/faqiang007/dian-du-english@main/教材/";
+const LIB_KEY = "dd-lib-v1";
+
+async function libFetch(path) {
+  // 路径里有中文，必须编码；encodeURI 不动 / 和 : ，正好
+  const r = await fetch(encodeURI(LIB_BASE + path), { cache: "force-cache" });
+  if (!r.ok) throw new Error("net");
+  return r.json();
+}
 
 function loadBookCache() {
   const raw = sGet(BOOK_CACHE_KEY);
@@ -869,74 +859,6 @@ ${hint || ""}
   return { title: data.title || "", content: data.content };
 }
 
-/* ---- 维基官方接口 ----
-   origin=* 这个参数是 MediaWiki 的约定：带上它，接口才会回
-   Access-Control-Allow-Origin: *，浏览器才允许跨站读结果。 */
-function wikiApi(host, params) {
-  const q = new URLSearchParams({ format: "json", origin: "*", ...params });
-  return `https://${host}/w/api.php?${q}`;
-}
-function wikiUrl(host, title) {
-  return `https://${host}/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
-}
-
-async function wikiSearch(host, term, limit) {
-  const r = await fetch(wikiApi(host, {
-    action: "query", list: "search", srsearch: term,
-    srlimit: String(limit), srnamespace: "0",
-  }));
-  if (!r.ok) throw new Error("net");
-  const d = await r.json();
-  return ((d.query && d.query.search) || []).map((x) => ({
-    title: x.title,
-    words: x.wordcount || 0,
-    // snippet 带 <span class="searchmatch"> 高亮标签和 &#039; 这类实体。
-    // 实体不能手工列，列不全——交给浏览器自己解码
-    snippet: decodeEntities(String(x.snippet || "").replace(/<[^>]+>/g, "")),
-  }));
-}
-
-function decodeEntities(str) {
-  try {
-    const d = new DOMParser().parseFromString(str, "text/html");
-    return (d.body.textContent || "").replace(/\s+/g, " ").trim();
-  } catch (e) { return str; }
-}
-
-/* 取一页的正文。
-   用 action=parse 而不是 prop=extracts：Wikisource 的正文是从 Page: 命名空间
-   转写过来的，extracts 对它一律返回空——这个坑实测过，别改回去。 */
-async function wikiText(host, title) {
-  const r = await fetch(wikiApi(host, { action: "parse", prop: "text", page: title }));
-  if (!r.ok) throw new Error("net");
-  const d = await r.json();
-  if (d.error) throw new Error("nopage");
-  return wikiHtmlToText((d.parse && d.parse.text && d.parse.text["*"]) || "");
-}
-
-/* 把接口回的 HTML 洗成干净段落。
-   用 DOMParser 而不是正则剥标签：正则会在每个 <span> 处断行，首字下沉的
-   大写字母会被切成单独一段（"Alice" / "was beginning to..."）。 */
-function wikiHtmlToText(html) {
-  let doc;
-  try { doc = new DOMParser().parseFromString(html, "text/html"); }
-  catch (e) { return ""; }
-  doc.querySelectorAll(
-    "style,script,table,figure,sup.reference,.mw-editsection,.wst-header,.wst-footer,"
-    + ".ws-noexport,.navbox,.printfooter,.toc,#toc,.reflist,.mw-references-wrap,.thumb,.hatnote"
-  ).forEach((n) => n.remove());
-  const out = [];
-  doc.querySelectorAll("p, li, h2, h3, h4, blockquote").forEach((n) => {
-    const t = (n.textContent || "")
-      .replace(/[​‎‏]/g, "")   // 转写页里到处是零宽字符
-      .replace(/\[\d+\]/g, "")                // 残留的脚注编号
-      .replace(/[ \t]+/g, " ")
-      .trim();
-    if (t.length > 1) out.push(t);
-  });
-  return out.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
-}
-
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return "网页"; }
 }
@@ -1070,7 +992,7 @@ export default function App() {
   const [realBusy, setRealBusy] = useState(false);
   const [realErr, setRealErr] = useState("");
   // {lv, at, list[], dropped, cites[]}；null = 还没搜过
-  const [books, setBooks] = useState(() => sGet(BOOKS_KEY));
+  const [books, setBooks] = useState(() => sGet(LIB_KEY));
   const [booksBusy, setBooksBusy] = useState(false);
   const [booksErr, setBooksErr] = useState("");
   const bookCacheRef = useRef(loadBookCache());
@@ -2022,6 +1944,8 @@ parts 按语序给 3-6 项，覆盖整句主干和关键修饰。`;
   function go(v) {
     setView(v);
     setNavOpen(false);
+    // 进教材页顺手把清单拉上；已经有了就直接返回，不会重复请求
+    if (v === "books") loadLibrary(false);
   }
 
   /* ---- 读后小测 ---- */
@@ -2260,71 +2184,40 @@ ${curText}
     }
   }
 
-  /* 按难度在三个书架里找可读材料。
-     全程不经过模型：搜索和取正文都是浏览器直接调维基官方接口，返回什么就是什么。
-     所以这里没有「会不会编」的问题——之前那版靠模型找，编造风险得靠层层核对去挡，
-     现在这个风险根本不存在。顺带也不花 API 的钱。 */
-  async function searchShelves(lvId, theTopic) {
+  /* 拉语料库索引。只是一份几十 KB 的清单，进页面拉一次就够，
+     之后按难度筛选、按关键词过滤全在本地做，不再联网。
+     索引也落盘，离线能看列表（正文另有自己的缓存）。 */
+  async function loadLibrary(force) {
     if (booksBusy) return;
-    const lv = LEVELS.find((l) => l.id === lvId) || LEVELS.find((l) => l.id === level) || LEVELS[1];
-    const shelves = SHELVES.filter((sh) => sh.lv.includes(lv.id));
-    const q = String(theTopic || "").trim();
+    if (!force && books && (books.items || []).length) return;
     setBooksBusy(true);
     setBooksErr("");
     try {
-      const per = Math.max(3, Math.ceil(12 / shelves.length));
-      const groups = await Promise.all(shelves.map(async (sh) => {
-        // 没给话题就用这个书架自己的种子词，每次随机一个，免得永远是同几篇
-        const term = q || sh.seeds[Math.floor(Math.random() * sh.seeds.length)];
-        try {
-          const hits = await wikiSearch(sh.host, term, per + 4);
-          // 词数太少的是目录页/消歧义页，点开没正文——实测目录页都在 200 词以下
-          return hits.filter((h) => h.words >= MIN_WORDS).slice(0, per)
-            .map((h) => ({ ...h, shelf: sh.id, shelfName: sh.name, kind: sh.kind, host: sh.host, term }));
-        } catch (e) { return []; }
-      }));
-      const list = [];
-      // 同一本书的不同版本会各占一张卡（Alice 1866 版和 1907 版的同一章），
-      // 去掉标题里的版本括号再比，只留先出现的那个
-      const seen = new Set();
-      // 按书架轮流取，免得某一家把整页占满
-      for (let i = 0; i < per + 4; i++) for (const g of groups) {
-        const it = g[i];
-        if (!it) continue;
-        const k = it.host + "|" + it.title.replace(/\s*\([^)]*\)/g, "").toLowerCase();
-        if (seen.has(k)) continue;
-        seen.add(k);
-        list.push(it);
-      }
-      if (!list.length) throw new Error("empty");
-
-      const next = { lv: lv.id, q, at: Date.now(), list: list.slice(0, 12) };
+      const d = await libFetch("索引.json");
+      const items = Array.isArray(d.items) ? d.items : [];
+      if (!items.length) throw new Error("empty");
+      const next = { v: d.v || 1, at: Date.now(), items };
       setBooks(next);
-      sSet(BOOKS_KEY, next);
+      if (!sSet(LIB_KEY, next)) showToast("索引没能存下来（存储写满了），这次还能用");
     } catch (e) {
-      setBooksErr(
-        e.message === "empty"
-          ? (q ? `这三个书架里没搜到「${q}」相关的成篇材料。换个说法，或者留空让它按难度推荐` 
-               : "这次没搜到东西，再点一次试试")
-          : "连不上维基的接口——检查一下网络，或者稍后再试"
-      );
+      setBooksErr("拉不到教材清单——检查一下网络再试。清单存在 jsDelivr 上，国内可以直连，不需要代理");
     } finally {
       setBooksBusy(false);
     }
   }
 
-  /* 把一份材料的正文取下来读。
-     和查词同一个套路：取过一次就存本地，之后点开直接读——不再联网、离线也能读，
-     也能当复习材料反复用。区别是这里第一次取也不花钱。 */
+  /* 把一篇的正文取下来读。
+     和查词同一个套路：取过一次就存本地，之后点开直接读、离线也能读，
+     也能当复习材料反复用。 */
   async function readBook(b) {
     if (readBusy) return;
-    const key = b.host + "|" + b.title;
+    const key = b.id;
 
     const hit = bookCacheRef.current.get(key);
     if (hit && (hit.chapters || []).length) {
       finishImport({
         title: hit.title, chapters: hit.chapters, ch: 0, trans: {},
-        srcUrl: wikiUrl(b.host, b.title), srcSite: b.host,
+        srcUrl: b.srcUrl, srcSite: b.src,
         cn_intro: `本地已存的正文（约 ${hit.words} 词${hit.chapters.length > 1 ? `，${hit.chapters.length} 章` : ""}），没有重新联网`,
         topic: hit.title, level, imported: true,
       });
@@ -2335,13 +2228,14 @@ ${curText}
     setReadBusy(key);
     setReadErr("");
     try {
-      const text = await wikiText(b.host, b.title);
-      if (countWords(text) < 80) throw new Error("thin");
+      const d = await libFetch("篇目/" + b.id + ".json");
+      const text = String(d.text || "");
+      if (countWords(text) < 60) throw new Error("thin");
       const chs = splitChapters(text);
       const words = countWords(text);
 
       // 先落盘再进阅读页：万一存储写满了，得当场说清这次没存下来
-      bookCacheRef.current.set(key, { title: b.title, site: b.host, chapters: chs, words, at: Date.now() });
+      bookCacheRef.current.set(key, { title: b.title, site: b.src, chapters: chs, words, at: Date.now() });
       const { map, ok } = saveBookCache(bookCacheRef.current);
       bookCacheRef.current = map;
       const nx = {};
@@ -2351,21 +2245,18 @@ ${curText}
 
       finishImport({
         title: b.title, chapters: chs, ch: 0, trans: {},
-        srcUrl: wikiUrl(b.host, b.title), srcSite: b.host,
-        cn_intro: `取自 ${b.shelfName} 的原文，约 ${words} 词`
+        srcUrl: b.srcUrl, srcSite: b.src,
+        cn_intro: `${b.author} · ${b.book}，约 ${words} 词`
           + (chs.length > 1 ? `，已分成 ${chs.length} 章` : "")
-          + (ok ? "。已存本地，下次点开不用再联网" : "。"),
+          + `。许可：${b.lic}`
+          + (ok ? "。已存本地，下次点开不用再联网" : ""),
         topic: b.title, level, imported: true,
       });
       go("read");
     } catch (e) {
-      setReadErr(
-        e.message === "nopage"
-          ? "这一页在维基上不存在了（可能刚被改名或删除）。点右边的链接自己看看"
-          : e.message === "thin"
-            ? "这一页几乎没有正文——多半是目录页或消歧义页。挑列表里词数多的那些"
-            : "取不到这一页的正文，检查一下网络再试"
-      );
+      setReadErr(e.message === "thin"
+        ? "这一篇的正文是空的，可能是语料库出了问题。换一篇试试"
+        : "取不到这一篇的正文，检查一下网络再试");
     } finally {
       setReadBusy("");
     }
@@ -2759,7 +2650,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               busy={booksBusy}
               err={booksErr}
               curLevel={level}
-              onSearch={searchShelves}
+              onLoad={loadLibrary}
               onRead={readBook}
               readBusy={readBusy}
               readErr={readErr}
@@ -4314,19 +4205,33 @@ function StatsView({ stats, streak, vocab = [], vocabCount, dueCount, level, onG
 /* ---------- 生词本 ---------- */
 
 /* ---- 教材推荐 ---- */
-function BooksView({ books, busy, err, curLevel, onSearch, onRead, readBusy, readErr, cached }) {
+function BooksView({ books, busy, err, curLevel, onLoad, onRead, readBusy, readErr, cached }) {
   // 只在本页选难度，不改全局设置——来看看别的水平有什么，不该顺手把阅读难度也改了
-  const [lv, setLv] = useState((books && books.lv) || curLevel);
-  const [q, setQ] = useState((books && books.q) || "");
+  const [lv, setLv] = useState(curLevel);
+  const [q, setQ] = useState("");
   const cur = LEVELS.find((l) => l.id === lv) || LEVELS[1];
-  const shelves = SHELVES.filter((sh) => sh.lv.includes(lv));
-  const list = (books && books.list) || [];
+  const all = (books && books.items) || [];
+
+  // 筛选全在本地做，索引已经在手上了，敲字不发任何请求
+  const list = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    return all
+      .filter((x) => x.lv === lv)
+      .filter((x) => !kw || (x.title + " " + x.book + " " + x.author).toLowerCase().includes(kw))
+      .sort((x, y) => x.words - y.words);
+  }, [all, lv, q]);
+
+  const counts = useMemo(() => {
+    const m = {};
+    for (const x of all) m[x.lv] = (m[x.lv] || 0) + 1;
+    return m;
+  }, [all]);
 
   return (
     <div className="books">
       <div className="vb-head">
-        <h2 className="vb-t"><GraduationCap size={19} /> 教材推荐</h2>
-        {list.length > 0 && <span className="vb-n">{list.length} 篇</span>}
+        <h2 className="vb-t"><GraduationCap size={19} /> 教材库</h2>
+        {all.length > 0 && <span className="vb-n">{list.length} / {all.length} 篇</span>}
       </div>
 
       <div className="bk-bar">
@@ -4334,88 +4239,89 @@ function BooksView({ books, busy, err, curLevel, onSearch, onRead, readBusy, rea
         <div className="ai-chips">
           {LEVELS.map((l) => (
             <button key={l.id} className={l.id === lv ? "lvt on" : "lvt"}
-              onClick={() => setLv(l.id)}>{l.label}</button>
+              onClick={() => setLv(l.id)}>
+              {l.label}{counts[l.id] ? <span className="lvt-n">{counts[l.id]}</span> : null}
+            </button>
           ))}
         </div>
       </div>
 
       <div className="bk-bar bk-q">
-        <span className="ai-l">话题</span>
+        <span className="ai-l">筛选</span>
         <input
           className="bk-in"
           value={q}
-          placeholder="想读什么？留空就按难度推荐"
+          placeholder="按标题、作者、书名筛（不联网）"
           onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onSearch(lv, q); }}
         />
-        <button className="btn-pri small" onClick={() => onSearch(lv, q)} disabled={busy}>
-          {busy ? <><Loader2 size={15} className="spin" /> 搜索中…</>
-                : <><Search size={15} /> {list.length ? "换一批" : "找材料"}</>}
+        <button className="btn-gh small" onClick={() => onLoad(true)} disabled={busy}>
+          {busy ? <><Loader2 size={15} className="spin" /> 更新中…</> : <><RefreshCw size={15} /> 更新清单</>}
         </button>
       </div>
 
-      <p className="bk-hint">
-        {cur.tag} · 这个水平从 {shelves.map((sh) => sh.name).join(" / ")} 里找
-      </p>
+      <p className="bk-hint">{cur.tag} · {cur.spec}</p>
 
       <details className="bk-note">
-        <summary>这些是哪来的、为什么一定读得到</summary>
+        <summary>这些材料是哪来的</summary>
         <p>
-          三个来源都是维基基金会的官方站点，它们开放跨域访问，所以是<b>浏览器自己直接去取</b>的：
-          {shelves.map((sh) => `${sh.name}（${sh.hint}）`).join("；")}。
+          全部是<b>版权已过期的公版文学</b>（伊索寓言、格林/安徒生童话、爱丽丝、丛林之书、
+          汤姆索亚、福尔摩斯、欧亨利短篇、圣诞颂歌、傲慢与偏见）和
+          <b>Simple English Wikipedia</b>（CC BY-SA 4.0）。每篇都标了作者、出处和许可，
+          点开能核对。
         </p>
         <p>
-          全程没有模型参与，接口回什么就是什么，<b>内容不可能是编的，也不花 API 的钱</b>。
-          这也是为什么这一版能真读到正文——之前那版让模型去抓，而模型的联网插件是「搜索」
-          不是「抓取」，只能给回搜索摘要。
+          语料随应用一起发布，从 jsDelivr 取，<b>国内直连可用，不需要代理</b>。
+          这是刻意的选择：能实时抓的第三方站要么国内连不上，要么不放行跨域，没有交集。
         </p>
         <p>
-          点「取来读」会把正文取回来分好章，<b>存在本地</b>，然后进阅读页——和你自己导入的
-          文章一样能点词查词、做小测。存过之后再点就是直接打开，离线也能读。
-        </p>
-        <p>
-          代价说清楚：来源就这三家。British Council、VOA、Project Gutenberg 不放行跨域，
-          浏览器取不到，所以不在列表里。
+          难度按来源类型定区间、再用可读性指标（句长、长词比例）在区间内选一档。
+          点「取来读」会把正文取回来<b>存在本地</b>，之后离线也能读，
+          和你自己导入的文章一样能点词查词、做小测。
         </p>
       </details>
 
       {err && <div className="err">{err}</div>}
       {readErr && <div className="err">{readErr}</div>}
 
-      {list.length === 0 && !busy && !err && (
+      {all.length === 0 && !busy && !err && (
         <div className="vb-empty">
           <div className="dict-idle-mark">007</div>
-          <p>选个难度,点「找材料」——列出来的每一篇都能直接读 📚</p>
+          <p>正在取教材清单…</p>
+        </div>
+      )}
+
+      {all.length > 0 && list.length === 0 && (
+        <div className="vb-empty">
+          <p>这个难度下没有匹配「{q}」的篇目，换个词或换个难度</p>
         </div>
       )}
 
       {list.length > 0 && (
         <>
           <div className="bk-list">
-            {list.map((b, i) => {
-              const key = b.host + "|" + b.title;
-              const saved = cached[key] > 0;
+            {list.map((b) => {
+              const saved = cached[b.id] > 0;
               return (
-                <div className="bk-card" key={key + i}>
+                <div className="bk-card" key={b.id}>
                   <div className="bk-top">
                     <h3 className="bk-t">{b.title}</h3>
                     <span className="bk-kind">{b.kind}</span>
                   </div>
-                  <p className="bk-meta">{b.shelfName} · 约 {b.words} 词</p>
-                  {b.snippet && <p className="bk-why">{b.snippet}…</p>}
+                  <p className="bk-meta">{b.author} · {b.book}</p>
+                  <p className="bk-why">约 {b.words} 词 · {b.lic}</p>
                   {saved && (
                     <p className="bk-saved"><Check size={12} /> 已存本地 · 离线也能读</p>
                   )}
                   <div className="bk-acts">
                     <button className="btn-pri small" onClick={() => onRead(b)} disabled={!!readBusy}>
-                      {readBusy === key
+                      {readBusy === b.id
                         ? <><Loader2 size={14} className="spin" /> 取正文…</>
                         : saved
                           ? <><BookOpen size={14} /> 读这篇</>
                           : <><Download size={14} /> 取来读</>}
                     </button>
-                    <a className="bk-src" href={wikiUrl(b.host, b.title)} target="_blank" rel="noreferrer">
-                      <ExternalLink size={12} /> {b.host}
+                    <a className="bk-src" href={b.srcUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={12} /> 出处
                     </a>
                   </div>
                 </div>
@@ -4423,11 +4329,7 @@ function BooksView({ books, busy, err, curLevel, onSearch, onRead, readBusy, rea
             })}
           </div>
           <div className="bk-foot">
-            <span>
-              {LEVELS.find((l) => l.id === books.lv)?.tag}
-              {books.q ? ` · 话题「${books.q}」` : " · 按难度推荐"}
-              {" · 已过滤掉没有正文的目录页"}
-            </span>
+            <span>共 {all.length} 篇，按 CEFR 分五档。内容随应用发布，读过的存在本地</span>
           </div>
         </>
       )}
@@ -5250,6 +5152,7 @@ button:disabled{opacity:.55;cursor:default}
   border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-family:var(--sans)}
 .bk-in:focus{outline:none;border-color:var(--blue)}
 .bk-in::placeholder{color:var(--mut)}
+.lvt-n{margin-left:5px;font-size:10.5px;opacity:.65;font-weight:600}
 .bk-hint{margin-top:8px;font-size:12.5px;color:var(--mut)}
 .bk-note{margin-top:14px;font-size:12.5px;color:var(--ink2);line-height:1.65}
 .bk-note summary{cursor:pointer;color:var(--mut);font-size:12.5px;
