@@ -699,6 +699,8 @@ function buildVocabMd(vocab) {
     if (d.type === "en") {
       lines.push(`## ${d.word}  ${d.phonetic_us || ""}`);
       (d.senses || []).forEach((x) => lines.push(`- ${x.pos} ${x.cn}`));
+      // 计算机含义要一起导出，否则换机器搬家就丢了
+      if (d.tech_cn) lines.push(`- 计算机：${d.tech_cn}`);
       if (d.examples?.[0]) lines.push(`- 例：${d.examples[0].en} — ${d.examples[0].cn}`);
     } else {
       lines.push(`## ${d.input}`);
@@ -739,9 +741,15 @@ function parseVocabMd(text) {
     } else {
       const senses = [];
       let example = null;
+      let tech = null;
       for (const ln of lines.slice(1)) {
         if (!ln.startsWith("- ")) continue;
         const body = ln.slice(2).trim();
+        // 这一条要在「当成释义」之前判，否则会被兜底分支收成一条没有词性的释义
+        if (/^计算机[：:]/.test(body)) {
+          tech = body.replace(/^计算机[：:]\s*/, "").trim() || null;
+          continue;
+        }
         if (/^例[：:]/.test(body)) {
           const ex = body.replace(/^例[：:]\s*/, "");
           const seg = ex.split(/\s+—\s+/);
@@ -755,7 +763,7 @@ function parseVocabMd(text) {
       if (!senses.length && !example) continue;
       out.push({
         word,
-        data: { type: "en", word, phonetic_us: phon, phonetic_uk: "", context_cn: null, senses, examples: example ? [example] : [] },
+        data: { type: "en", word, phonetic_us: phon, phonetic_uk: "", context_cn: null, tech_cn: tech, senses, examples: example ? [example] : [] },
       });
     }
   }
@@ -4506,6 +4514,7 @@ function VocabView({ vocab, dueCount, onStartReview, onSpeak, onRemove, onCopy, 
                             <span className="vb-rw">{vbWord(d)}</span>
                             {ph && <span className="vb-rph">{ph}</span>}
                             <span className="vb-rbrief">{vbBrief(d)}</span>
+                            {d.tech_cn && <span className="vb-rtech" title="有计算机领域的含义">计算机</span>}
                           </button>
                           <button className="vb-rsp" onClick={() => onSpeak(d.type === "en" ? d.word : ((d.translations || [])[0] || {}).en || d.input, "en-US")} aria-label="发音">
                             <Volume2 size={13} />
@@ -4522,6 +4531,14 @@ function VocabView({ vocab, dueCount, onStartReview, onSpeak, onRemove, onCopy, 
                                       <li key={i}><i className="pos">{x.pos}</i><span>{x.cn}</span></li>
                                     ))}
                                   </ul>
+                                  {/* 计算机含义是特意查出来的东西，收进生词本却看不到，
+                                      等于白查。位置和查词卡保持一致：释义之后、例句之前 */}
+                                  {d.tech_cn && (
+                                    <div className="ctx tech vb-tech">
+                                      <span className="ctx-l tech-l">计算机</span>
+                                      {d.tech_cn}
+                                    </div>
+                                  )}
                                   {(d.examples || []).slice(0, 2).map((ex, i) => (
                                     <p className="vb-ex" key={i}>
                                       <Boldify text={ex.en} word={d.word} />
@@ -5333,6 +5350,10 @@ button:disabled{opacity:.55;cursor:default}
 .vb-det .senses{margin-top:10px}
 .vb-det .vb-ex{margin-top:9px}
 .vb-det .vb-meta{display:flex;align-items:center;gap:10px}
+.vb-det .vb-tech{margin-top:11px}
+/* 不展开也要能一眼看出哪些词有计算机含义 */
+.vb-rtech{flex:none;font-size:10.5px;font-weight:700;color:var(--card);background:var(--blue);
+  border-radius:5px;padding:1px 6px;letter-spacing:.2px}
 .vb-look{margin-left:auto;font-size:11.5px;color:var(--mut);
   display:inline-flex;align-items:center;gap:4px}
 .vb-look:hover{color:var(--blue)}
