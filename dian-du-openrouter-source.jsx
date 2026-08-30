@@ -4522,7 +4522,6 @@ function VocabView({ vocab, dueCount, onStartReview, onSpeak, onRemove, onCopy, 
                             <span className="vb-rw">{vbWord(d)}</span>
                             {ph && <span className="vb-rph">{ph}</span>}
                             <span className="vb-rbrief">{vbBrief(d)}</span>
-                            {d.tech_cn && <span className="vb-rtech" title="有计算机领域的含义">计算机</span>}
                           </button>
                           <button className="vb-rsp" onClick={() => onSpeak(d.type === "en" ? d.word : ((d.translations || [])[0] || {}).en || d.input, "en-US")} aria-label="发音">
                             <Volume2 size={13} />
@@ -5359,9 +5358,6 @@ button:disabled{opacity:.55;cursor:default}
 .vb-det .vb-ex{margin-top:9px}
 .vb-det .vb-meta{display:flex;align-items:center;gap:10px}
 .vb-det .vb-tech{margin-top:11px}
-/* 不展开也要能一眼看出哪些词有计算机含义 */
-.vb-rtech{flex:none;font-size:10.5px;font-weight:700;color:var(--card);background:var(--blue);
-  border-radius:5px;padding:1px 6px;letter-spacing:.2px}
 .fc-tech{margin-top:12px;text-align:left}
 .vb-look{margin-left:auto;font-size:11.5px;color:var(--mut);
   display:inline-flex;align-items:center;gap:4px}
