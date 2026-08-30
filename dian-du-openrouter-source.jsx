@@ -43,7 +43,7 @@ import {
   ChevronLeft, ChevronRight, RotateCcw, Turtle, Flame,
   Languages, Upload, Download, FileUp, ChevronDown, MoreHorizontal,
   KeyRound, Settings, Bookmark, Menu, Globe, ExternalLink,
-  MessagesSquare, Send, CornerDownLeft, GraduationCap
+  MessagesSquare, Send, CornerDownLeft, GraduationCap, PanelLeft
 } from "lucide-react";
 import mammoth from "mammoth";
 import { unzipSync, strFromU8 } from "fflate";
@@ -2544,7 +2544,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
           aria-label="收起侧栏"
           title="收起侧栏"
         >
-          <ChevronLeft size={17} />
+          <PanelLeft size={17} />
         </button>
         <button className="brand2" onClick={() => go("read")}>
           <span className="logo">007</span>学英语
@@ -2633,7 +2633,8 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
             }}
             aria-label="展开菜单"
           >
-            <Menu size={18} />
+            <Menu size={18} className="mb-menu" />
+            <PanelLeft size={18} className="mb-panel" />
           </button>
           <div className="tsearch">
             <Search size={14} />
@@ -4865,6 +4866,7 @@ button:disabled{opacity:.55;cursor:default}
   border-bottom:1px solid var(--line);height:58px;padding:0 26px;display:flex;align-items:center;gap:12px}
 .menubtn{display:none;color:var(--ink2);padding:8px;border-radius:8px}
 .menubtn:hover{background:var(--line2);color:var(--ink)}
+.mb-panel{display:none}
 .sb-fold{display:none;position:absolute;top:14px;right:10px;color:var(--mut);
   padding:6px;border-radius:8px;z-index:1}
 .sb-fold:hover{background:var(--line2);color:var(--ink)}
@@ -4874,6 +4876,10 @@ button:disabled{opacity:.55;cursor:default}
    干掉，顶条的汉堡键就成了死键——点了没反应，还找不出原因。 */
 @media (min-width:1001px){
   .sb-fold{display:inline-flex}
+  /* 宽屏下这个键的含义是「把侧栏放回来」，和收起键配成一对，用同一个图标；
+     窄屏保持汉堡，那里它的含义是「拉出抽屉」，不是同一件事 */
+  .mb-menu{display:none}
+  .mb-panel{display:inline}
   .app.navfold{grid-template-columns:minmax(0,1fr)}
   .app.navfold .sidebar{display:none}
   .app.navfold .menubtn{display:inline-flex}
