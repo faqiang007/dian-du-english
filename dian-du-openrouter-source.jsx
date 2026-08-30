@@ -1128,7 +1128,7 @@ export default function App() {
   const [shadow, setShadow] = useState({ on: false, idx: 0, slow: false, waiting: false });
   const [rev, setRev] = useState(null);                 // {queue,i,flip,ok,ng}
 
-  const [prefs, setPrefs] = useState({ theme: "paper", font: "serif", size: 19, voiceURI: "", rate: 1, dictOff: false });
+  const [prefs, setPrefs] = useState({ theme: "paper", font: "serif", size: 19, voiceURI: "", rate: 1, dictOff: false, navFold: false });
   const [navOpen, setNavOpen] = useState(false);   // 窄屏时侧栏才是抽屉，宽屏一直显示
   const [providerId, setProviderId] = useState(loadProviderId);
   const [keyMap, setKeyMap] = useState(loadKeyMap);
@@ -2526,7 +2526,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
   }
 
   return (
-    <div className="app" style={appStyle}>
+    <div className={prefs.navFold ? "app navfold" : "app"} style={appStyle}>
       <style>{CSS}</style>
 
       {/* ======= 左侧栏 ======= */}
@@ -2535,6 +2535,16 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
         {/* 窄屏下侧栏占满整屏、不再有遮罩可点，得给一个明确的关闭出口 */}
         <button className="sb-close" onClick={() => setNavOpen(false)} aria-label="关闭菜单">
           <X size={18} />
+        </button>
+        {/* 宽屏专用：把侧栏整个收起，正文占满。窄屏下侧栏本来就是抽屉，
+            用上面那个关闭按钮，所以这个在窄屏隐藏。 */}
+        <button
+          className="sb-fold"
+          onClick={() => setPrefs((p) => ({ ...p, navFold: true }))}
+          aria-label="收起侧栏"
+          title="收起侧栏"
+        >
+          <ChevronLeft size={17} />
         </button>
         <button className="brand2" onClick={() => go("read")}>
           <span className="logo">007</span>学英语
@@ -2612,7 +2622,17 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
         {/* ======= 细顶条：只放查词 ======= */}
         <header className="topbar">
           {/* 开侧栏时收起词典抽屉，理由同 openDict：两个浮层不能同时占屏 */}
-          <button className="menubtn" onClick={() => { setNavOpen(true); setDictOpen(false); }} aria-label="菜单">
+          <button
+            className="menubtn"
+            onClick={() => {
+              // 宽屏时它负责「展开被收起的侧栏」，窄屏时负责「拉出抽屉」。
+              // 两件事一起做，不用判断当前视口——另一件在当前视口本来就是空操作。
+              setPrefs((p) => (p.navFold ? { ...p, navFold: false } : p));
+              setNavOpen(true);
+              setDictOpen(false);
+            }}
+            aria-label="展开菜单"
+          >
             <Menu size={18} />
           </button>
           <div className="tsearch">
@@ -4844,6 +4864,20 @@ button:disabled{opacity:.55;cursor:default}
 .topbar{position:sticky;top:0;z-index:40;background:var(--top);backdrop-filter:blur(10px);
   border-bottom:1px solid var(--line);height:58px;padding:0 26px;display:flex;align-items:center;gap:12px}
 .menubtn{display:none;color:var(--ink2);padding:8px;border-radius:8px}
+.menubtn:hover{background:var(--line2);color:var(--ink)}
+.sb-fold{display:none;position:absolute;top:14px;right:10px;color:var(--mut);
+  padding:6px;border-radius:8px;z-index:1}
+.sb-fold:hover{background:var(--line2);color:var(--ink)}
+
+/* 收起侧栏，正文占满。
+   **必须锁在宽屏**：窄屏下侧栏是抽屉，这几条要是生效，抽屉会被 display:none
+   干掉，顶条的汉堡键就成了死键——点了没反应，还找不出原因。 */
+@media (min-width:1001px){
+  .sb-fold{display:inline-flex}
+  .app.navfold{grid-template-columns:minmax(0,1fr)}
+  .app.navfold .sidebar{display:none}
+  .app.navfold .menubtn{display:inline-flex}
+}
 .menubtn:hover{background:var(--line2)}
 .tsearch{flex:1;max-width:420px;display:flex;align-items:center;gap:8px;background:var(--card);
   border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--mut)}
