@@ -2341,7 +2341,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
   function startReview() {
     if (!dueList.length) { showToast("今天没有到期的词，先去读一篇吧"); return; }
     hardStop();
-    setRev({ queue: dueList.map((v) => v.key), i: 0, flip: false, ok: 0, ng: 0 });
+    setRev({ queue: dueList.map((v) => v.key), i: 0, flip: false, ok: 0, ng: 0, sk: 0 });
     setView("review");
   }
   function answerReview(good) {
@@ -2363,6 +2363,15 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
       ...x, i: x.i + 1, flip: false,
       ok: x.ok + (good ? 1 : 0), ng: x.ng + (good ? 0 : 1),
     }));
+  }
+
+  /* 跳过 = 这次没问。既不是记住也不是没记住，所以一个字段都不许动：
+     rv 不动（due 不变，它今天还是到期状态，待会儿还会再来）、meet 不动、
+     统计不加。故意不写成 answerReview 的一个参数——那个函数每一行都在
+     写数据，混进来以后改动时很容易手滑让跳过污染复习进度。 */
+  function skipReview() {
+    if (!rev) return;
+    setRev((x) => ({ ...x, i: x.i + 1, flip: false, sk: (x.sk || 0) + 1 }));
   }
 
   /* ---- 生词本 ---- */
@@ -2659,6 +2668,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               onSpeak={speak}
               onFlip={() => setRev((x) => ({ ...x, flip: true }))}
               onAnswer={answerReview}
+              onSkip={skipReview}
               onExit={() => setView("vocab")}
               onRead={() => { setView("read"); openBlankTab(); }}
             />
@@ -3944,7 +3954,7 @@ function QuizBlock({ quiz, onPick, onNext, onRetryArticle, onSaveMissed, savedKe
 
 /* ---------- 复习模式 ---------- */
 
-function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onExit, onRead }) {
+function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onSkip, onExit, onRead }) {
   if (!rev) {
     return (
       <div className="rvw">
@@ -3954,12 +3964,24 @@ function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onExit, onRead }) {
     );
   }
   if (rev.i >= rev.queue.length) {
+    const skipped = rev.sk || 0;
+    const allSkipped = skipped > 0 && rev.ok === 0 && rev.ng === 0;
     return (
       <div className="rvw">
         <div className="rvw-done">
-          <div className="rvw-emoji">🎉</div>
-          <h2>今日复习完成！</h2>
-          <p className="mut">记住了 {rev.ok} 个 · 还不熟 {rev.ng} 个{rev.ng > 0 ? "（它们很快会再来见你）" : ""}</p>
+          {/* 一个词都没答、全跳过了，就别恭喜人家——什么也没做却被撒花，是假反馈。 */}
+          <div className="rvw-emoji">{allSkipped ? "😌" : "🎉"}</div>
+          <h2>{allSkipped ? "这轮都跳过了" : "今日复习完成！"}</h2>
+          <p className="mut">
+            {allSkipped
+              ? "它们还在等你，什么时候想看随时回来。"
+              : <>记住了 {rev.ok} 个 · 还不熟 {rev.ng} 个{rev.ng > 0 ? "（它们很快会再来见你）" : ""}</>}
+          </p>
+          {/* 跳过不动到期时间，所以侧栏的红色数字不会减少。不说这句，
+              用户会以为刚才那轮没保存。 */}
+          {skipped > 0 && !allSkipped && (
+            <p className="mut rvw-skip">跳过 {skipped} 个 —— 它们仍在待复习里，随时可以再来</p>
+          )}
           <div className="rvw-acts">
             <button className="btn-soft" onClick={onExit}><BookOpen size={15} /> 返回生词本</button>
             <button className="btn-pri" onClick={onRead}><Sparkles size={15} /> 读一篇织入生词的新文章</button>
@@ -3975,7 +3997,7 @@ function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onExit, onRead }) {
       <div className="rvw">
         <div className="flipcard">
           <p className="mut">这个词刚被移除了。</p>
-          <button className="btn-soft" style={{ marginTop: 14 }} onClick={() => onAnswer(true)}>
+          <button className="btn-soft" style={{ marginTop: 14 }} onClick={onSkip}>
             跳过 <ChevronRight size={14} />
           </button>
         </div>
@@ -4043,7 +4065,12 @@ function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onExit, onRead }) {
             </div>
           </div>
         ) : (
-          <button className="fc-flip" onClick={onFlip}>想好意思了？点开看释义</button>
+          <>
+            <button className="fc-flip" onClick={onFlip}>想好意思了？点开看释义</button>
+            {/* 只在正面给这个出口。翻面后已经看到答案，此时该给的是判断，
+                再留一个跳过只会让人逃避判断，复习质量反而下降。 */}
+            <button className="fc-skip" onClick={onSkip}>这个词先跳过</button>
+          </>
         )}
       </div>
     </div>
@@ -5213,6 +5240,9 @@ button:disabled{opacity:.55;cursor:default}
 .fc-flip{margin-top:26px;width:100%;font-size:14.5px;color:var(--ink2);border:1.5px dashed var(--line);
   border-radius:12px;padding:14px;background:var(--paper)}
 .fc-flip:hover{border-color:var(--blue);color:var(--blue)}
+.fc-skip{margin-top:10px;width:100%;font-size:13px;color:var(--mut);padding:8px;background:none}
+.fc-skip:hover{color:var(--ink2);text-decoration:underline}
+.rvw-skip{font-size:13px;margin-top:6px}
 .fc-back{margin-top:20px;text-align:left;border-top:1px dashed var(--line2);padding-top:16px}
 .fc-btns{display:flex;gap:10px;margin-top:20px}
 .fc-ng,.fc-ok{flex:1;font-size:15px;font-weight:700;border-radius:12px;padding:13px}
