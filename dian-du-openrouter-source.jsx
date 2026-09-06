@@ -1626,6 +1626,23 @@ export default function App() {
 
     const cacheKey = ql + "||" + (sentence || "");
     const finish = (data, local) => {
+      /* 计数只能先按「你输进去的那串字」记——查之前谁也不知道正确的词是什么。
+         模型判定拼错了，就把这一笔挪到正确拼写名下：不然 recieve 和 receive
+         各算一次，「这个词你查过 N 次」永远凑不齐，统计里还会多出一个
+         根本不存在的词。只认 typo，词形变化（running→run）不并，
+         那是两个都真实存在的形态。 */
+      let cnt = ql;
+      const fixed = (data.typo || "").toLowerCase();
+      if (fixed && fixed !== ql) {
+        seenRef.current[fixed] = (seenRef.current[fixed] || 0) + (seenRef.current[ql] || 1);
+        delete seenRef.current[ql];
+        seenRef.current = saveSeen(seenRef.current);
+        if (clickedRef.current.delete(ql)) {
+          clickedRef.current.add(fixed);
+          setClicks(clickedRef.current.size);
+        }
+        cnt = fixed;
+      }
       const lemma = (data.word || data.input || q).toLowerCase();
       const hit = vocab.find(
         (v) =>
@@ -1640,7 +1657,10 @@ export default function App() {
           meet: hit ? hit.meet || 1 : 0,
           // local=true 表示这条没花 API，界面据此提供「补一条语境」的入口
           local: !!local,
-          seen: seenRef.current[ql] || 1,
+          seen: seenRef.current[cnt] || 1,
+          // 卡片要拿它跟 typo 比：只有「这次真的输错了」才提示。
+          // 后来直接输正确拼写命中同一条缓存时，不该再跳纠错条
+          raw: q,
         },
       };
       setDict(next);
@@ -1680,7 +1700,10 @@ translations 按常用程度给 1-3 个；examples 恰好 2 条（使用第一�
       prompt = `你是一本专业的英汉词典（风格类似有道词典）。查询词条：「${q}」${sentence ? `\n它出现在句子："${sentence}"` : ""}
 
 只返回 JSON，不要任何其他文字或 markdown 代码块：
-{"type":"en","word":"单词原形","phonetic_us":"美式音标，含斜杠","phonetic_uk":"英式音标，含斜杠","context_cn":${sentence ? '"该词在上面句子中的准确中文含义，一句话说清"' : "null"},"tech_cn":"该词在计算机／IT 领域的专门含义，白话说清，不超过 40 字；没有专门含义就填 null","senses":[{"pos":"词性缩写如 n. / v. / adj.","cn":"中文释义"}],"examples":[{"en":"英文例句","cn":"中文翻译"}]}
+{"type":"en","word":"单词原形","typo":"若查询词拼写有误，填正确拼写；拼写本身没问题就填 null","phonetic_us":"美式音标，含斜杠","phonetic_uk":"英式音标，含斜杠","context_cn":${sentence ? '"该词在上面句子中的准确中文含义，一句话说清"' : "null"},"tech_cn":"该词在计算机／IT 领域的专门含义，白话说清，不超过 40 字；没有专门含义就填 null","senses":[{"pos":"词性缩写如 n. / v. / adj.","cn":"中文释义"}],"examples":[{"en":"英文例句","cn":"中文翻译"}]}
+
+若查询词只是拼错了（如 recieve、beleive、occassion、seperate），按你判断出的正确单词查，word 填正确的词，同时把正确拼写填进 typo。词形变化不算拼错：running、went、better、mice 这类一律 typo 填 null。
+若查询词根本不是英文单词或词组（随手敲的乱码、无意义字母串），只返回 {"type":"none"} 这一个字段，不要编造任何释义。
 
 senses 按常用程度排列，最多 4 条；examples 恰好 2 条且包含查询词，难度适中。若词条是短语，phonetic 可为 null。
 
@@ -1689,6 +1712,15 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
       if (!data.type) throw new Error("bad");
+      /* 模型认定这压根不是个词。到此为止：不写缓存、不留计数、不给收藏。
+         给一串乱码编一条像模像样的释义，比查不到糟得多——用户会当真。 */
+      if (data.type === "none") {
+        delete seenRef.current[ql];
+        seenRef.current = saveSeen(seenRef.current);
+        if (clickedRef.current.delete(ql)) setClicks(clickedRef.current.size);
+        setDict({ status: "none", term: q, key, sent: sentence });
+        return;
+      }
       cacheRef.current.set(cacheKey, data);
       // 按词原形和用户点的形态各存一份：点 running 下次直接命中，
       // 点 run 也命中同一条，省得同一个词的不同变形各查一次
@@ -2405,7 +2437,8 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
     }
     setVocab((v) => [
       {
-        key, data: dict.data, surface: dict.term, savedAt: Date.now(),
+        // surface 记的是「你当时看到的那个形态」，拼错的那个不配留下来
+        key, data: dict.data, surface: dict.data.typo || dict.term, savedAt: Date.now(),
         meet: 1, rv: { due: Date.now(), iv: 0, streak: 0 },
       },
       ...v,
@@ -3313,6 +3346,15 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
               </div>
             )}
 
+            {/* 不是个词。这里刻意不渲染任何卡片，也没有「重试」——
+                重试只会让模型再编一次，问题不在网络上。 */}
+            {dict.status === "none" && (
+              <div className="dict-load">
+                <span className="hw">{dict.term}</span>
+                <span className="mut">词典里没有这个词，检查一下拼写。</span>
+              </div>
+            )}
+
             {dict.status === "ok" && dict.data.type === "en" && (
               <>
                 <EnCard
@@ -3600,6 +3642,18 @@ function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave, onCtx, ctxBu
         <div className="nudge">
           <span><Brain size={12} /> 这个词你查过 {meta.seen} 次了</span>
           <button className="nudge-b" onClick={onSave}>收进生词本</button>
+        </div>
+      )}
+      {/* 拼错了必须说一句。不说的话，搜索框里还留着 recieve、卡片上却写着
+          receive，看起来像查串了词。放在词头之上，抬眼就看见。
+          只比对「这一次输进去的」：以后直接输正确拼写命中同一条缓存时，
+          data.typo 还在，但已经不是纠错，不该再跳这一条。 */}
+      {d.typo && meta?.raw && d.typo.toLowerCase() !== meta.raw.toLowerCase() && (
+        <div className="typofix">
+          <s>{meta.raw}</s>
+          <span className="tf-ar">&rarr;</span>
+          <b>{d.typo}</b>
+          <span className="tf-n">拼写有误，已按正确的词查</span>
         </div>
       )}
       <div className="hw">{d.word}</div>
@@ -5173,6 +5227,13 @@ button:disabled{opacity:.55;cursor:default}
    白字压上去只有 2.6:1 糊成一片；--card 在每套主题里都跟 --blue 深浅相反。 */
 .ctx.tech{background:var(--blue-bg);border-color:var(--blue-bg)}
 .ctx-l.tech-l{color:var(--card);background:var(--blue)}
+/* 纠错条：提示，不是报错。用中性灰而不是 --bad，红色会让人以为查失败了 */
+.typofix{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:9px;
+  background:var(--line2);border-radius:9px;padding:6px 10px;font-size:12.5px;color:var(--ink2)}
+.typofix s{color:var(--mut);font-weight:600}
+.typofix b{font-weight:800;color:var(--ink)}
+.tf-ar{color:var(--mut)}
+.tf-n{font-size:11.5px;color:var(--mut);font-weight:600}
 .nudge{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;
   background:var(--hi-wash);border:1px solid var(--hi-soft);border-radius:10px;padding:7px 9px 7px 11px;
   font-size:12px;font-weight:700;color:var(--hi-text)}
