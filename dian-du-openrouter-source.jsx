@@ -674,10 +674,15 @@ function escapeReg(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function Boldify({ text, word }) {
-  if (!word) return <>{text}</>;
-  const re = new RegExp(`(${escapeReg(word)}[a-zA-Z]*)`, "ig");
-  const isWord = new RegExp(`^${escapeReg(word)}[a-zA-Z]*$`, "i");
+/* alt 是「你实际查的那个形态」。只按原形匹配不够：正则从词头往后吃，
+   shake 吃不到 shaking（中间掉了个 e），于是你点了 shaking，例句里的
+   shaking 反而不加粗。两个都给，谁命中算谁。 */
+function Boldify({ text, word, alt }) {
+  const ws = [...new Set([word, alt].filter(Boolean).map(escapeReg))];
+  if (!ws.length) return <>{text}</>;
+  const src = ws.join("|");
+  const re = new RegExp(`((?:${src})[a-zA-Z]*)`, "ig");
+  const isWord = new RegExp(`^(?:${src})[a-zA-Z]*$`, "i");
   const parts = String(text).split(re);
   return (
     <>
@@ -1700,9 +1705,10 @@ translations 按常用程度给 1-3 个；examples 恰好 2 条（使用第一�
       prompt = `你是一本专业的英汉词典（风格类似有道词典）。查询词条：「${q}」${sentence ? `\n它出现在句子："${sentence}"` : ""}
 
 只返回 JSON，不要任何其他文字或 markdown 代码块：
-{"type":"en","word":"单词原形","typo":"若查询词拼写有误，填正确拼写；拼写本身没问题就填 null","phonetic_us":"美式音标，含斜杠","phonetic_uk":"英式音标，含斜杠","context_cn":${sentence ? '"该词在上面句子中的准确中文含义，一句话说清"' : "null"},"tech_cn":"该词在计算机／IT 领域的专门含义，白话说清，不超过 40 字；没有专门含义就填 null","senses":[{"pos":"词性缩写如 n. / v. / adj.","cn":"中文释义"}],"examples":[{"en":"英文例句","cn":"中文翻译"}]}
+{"type":"en","word":"单词原形","typo":"若查询词拼写有误，填正确拼写；拼写本身没问题就填 null","form":"查询词相对原形是什么词形，如 现在分词／过去式／过去分词／复数／第三人称单数／比较级／最高级；查询词本身就是原形就填 null","phonetic_us":"美式音标，含斜杠","phonetic_uk":"英式音标，含斜杠","context_cn":${sentence ? '"该词在上面句子中的准确中文含义，一句话说清"' : "null"},"tech_cn":"该词在计算机／IT 领域的专门含义，白话说清，不超过 40 字；没有专门含义就填 null","senses":[{"pos":"词性缩写如 n. / v. / adj.","cn":"中文释义"}],"examples":[{"en":"英文例句","cn":"中文翻译"}]}
 
 若查询词只是拼错了（如 recieve、beleive、occassion、seperate），按你判断出的正确单词查，word 填正确的词，同时把正确拼写填进 typo。词形变化不算拼错：running、went、better、mice 这类一律 typo 填 null。
+查询词是变形时，word 一律还原成原形，并把变形的名称填进 form：查 shaking → word 填 shake、form 填「现在分词」；查 went → word 填 go、form 填「过去式」；查 shake 本身 → form 填 null。
 若查询词根本不是英文单词或词组（随手敲的乱码、无意义字母串），只返回 {"type":"none"} 这一个字段，不要编造任何释义。
 
 senses 按常用程度排列，最多 4 条；examples 恰好 2 条且包含查询词，难度适中。若词条是短语，phonetic 可为 null。
@@ -3656,7 +3662,18 @@ function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave, onCtx, ctxBu
           <span className="tf-n">拼写有误，已按正确的词查</span>
         </div>
       )}
-      <div className="hw">{d.word}</div>
+      {/* 你点的是 shaking，卡片却只写 shake，会以为查串了词。所以大标题
+          保持你输进去的那个形态，原形降到下面一行。查的就是原形时这一行
+          不出现，卡片跟以前一模一样。
+          拼错是另一回事：那时大标题必须是正确拼写，你输错的那个已经在
+          上面的纠错条里交代过了，不能再占大标题。 */}
+      <div className="hw">{d.typo ? d.word : meta?.raw || d.word}</div>
+      {!d.typo && meta?.raw && d.word && meta.raw.toLowerCase() !== d.word.toLowerCase() && (
+        <div className="lemma">
+          原形 <b>{d.word}</b>
+          {d.form && <span className="lemma-f">· {d.form}</span>}
+        </div>
+      )}
       <div className="phon-row">
         {d.phonetic_us && (
           <button className="phon" onClick={() => onSpeak(d.word, "en-US")}>
@@ -3723,7 +3740,7 @@ function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave, onCtx, ctxBu
           {d.examples.map((ex, i) => (
             <div className="ex" key={i}>
               <p className="ex-en">
-                <Boldify text={ex.en} word={d.word} />
+                <Boldify text={ex.en} word={d.word} alt={meta?.raw} />
                 <button className="ex-sp" onClick={() => onSpeak(ex.en, "en-US", 0.9)} aria-label="朗读例句">
                   <Volume2 size={12} />
                 </button>
@@ -5228,6 +5245,11 @@ button:disabled{opacity:.55;cursor:default}
 .ctx.tech{background:var(--blue-bg);border-color:var(--blue-bg)}
 .ctx-l.tech-l{color:var(--card);background:var(--blue)}
 /* 纠错条：提示，不是报错。用中性灰而不是 --bad，红色会让人以为查失败了 */
+/* 原形行紧贴大标题，音标行接在它下面——音标本来就是原形的，
+   两行挨着才不会被当成大标题那个变形的音标 */
+.lemma{margin-top:5px;font-size:13px;color:var(--ink2)}
+.lemma b{font-weight:800;color:var(--ink)}
+.lemma-f{margin-left:5px;color:var(--mut);font-size:12px}
 .typofix{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:9px;
   background:var(--line2);border-radius:9px;padding:6px 10px;font-size:12.5px;color:var(--ink2)}
 .typofix s{color:var(--mut);font-weight:600}
