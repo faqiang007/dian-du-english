@@ -2599,10 +2599,14 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
         </button>
 
         <nav className="snav" aria-label="视图切换">
-          <button className={view === "home" ? "sl on" : "sl"} onClick={() => go("home")}>
+          {/* 主页就是「今天想读点什么」那一屏。它和阅读共用 read 视图，
+              靠有没有打开文章来分：没文章＝你在主页，有文章＝你在读。
+              所以点主页要先把当前文章放下（它还在「最近打开」里，点得回去）。 */}
+          <button className={view === "read" && !article ? "sl on" : "sl"}
+            onClick={() => { openBlankTab(); go("read"); }}>
             <Home size={16} /> 主页
           </button>
-          <button className={view === "read" ? "sl on" : "sl"} onClick={() => go("read")}>
+          <button className={view === "read" && article ? "sl on" : "sl"} onClick={() => go("read")}>
             <BookOpen size={16} /> 阅读
           </button>
           <button
@@ -2703,18 +2707,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
         <main className={prefs.dictOff || view !== "read" ? "layout nodict" : "layout"}>
         {/* ======= 左：主区域 ======= */}
         <section className="mainc">
-          {view === "home" ? (
-            <HomeView
-              dueCount={dueList.length}
-              tabs={tabs}
-              streak={streak}
-              vocabCount={vocab.length}
-              masteredCount={vocab.filter(isMastered).length}
-              onReview={startReview}
-              onOpen={(id) => { switchTab(id); go("read"); }}
-              onRead={() => { openBlankTab(); go("read"); }}
-            />
-          ) : view === "review" ? (
+          {view === "review" ? (
             <ReviewView
               rev={rev}
               vocab={vocab}
@@ -4039,60 +4032,6 @@ function QuizBlock({ quiz, onPick, onNext, onRetryArticle, onSaveMissed, savedKe
 
 /* ---------- 复习模式 ---------- */
 
-/* 主页＝随时能回来的总览。阅读页空状态里那块「今天」只在你还没打开文章时
-   出现，读起来就没了；这里是常驻的，而且带上了那边没有的东西：最近几篇的
-   进度、以及散在侧栏和统计页里的几个数字。
-   刻意只放三块。图表留在统计页——主页堆数字只会让人不想看。 */
-function HomeView({ dueCount, tabs, streak, vocabCount, masteredCount, onReview, onOpen, onRead }) {
-  const h = new Date().getHours();
-  const hi = h < 5 ? "夜深了" : h < 11 ? "早上好" : h < 14 ? "中午好" : h < 18 ? "下午好" : "晚上好";
-  const recent = (tabs || []).slice(0, 3);
-  return (
-    <div className="hm">
-      <h1 className="home-t">{hi}</h1>
-
-      {/* 今天该做的事只有一件，就只给一个按钮。没到期的词也别编一个任务出来，
-          换成「去读点东西」——那本来就是这个 App 的主线。 */}
-      {dueCount > 0 ? (
-        <button className="hm-act" onClick={onReview}>
-          <Brain size={17} />
-          <b>复习 {dueCount} 个词</b>
-          <span className="hm-act-n">今天到期</span>
-        </button>
-      ) : (
-        <button className="hm-act gh" onClick={onRead}>
-          <BookOpen size={17} />
-          <b>{vocabCount > 0 ? "今天没有到期的词，读点新的" : "从读一篇开始"}</b>
-        </button>
-      )}
-
-      {recent.length > 0 && (
-        <div className="hm-sec">
-          <div className="sec-l">继续读</div>
-          {recent.map((t) => {
-            const total = (t.chapters || []).length;
-            const at = total ? Math.min(Math.max(0, t.ch || 0), total - 1) + 1 : 0;
-            return (
-              <button className="hm-a" key={t.id} onClick={() => onOpen(t.id)}>
-                <span className="hm-a-t">{t.title}</span>
-                {total > 1 && <span className="hm-a-p">{at}/{total} 章</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {(streak > 0 || vocabCount > 0) && (
-        <div className="hm-num">
-          {streak > 0 && <span><Flame size={13} /> 连续 {streak} 天</span>}
-          {vocabCount > 0 && <span>生词 {vocabCount}</span>}
-          {masteredCount > 0 && <span>已掌握 {masteredCount}</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ReviewView({ rev, vocab, onSpeak, onFlip, onAnswer, onSkip, onExit, onRead }) {
   if (!rev) {
     return (
@@ -5073,29 +5012,6 @@ button:disabled{opacity:.55;cursor:default}
 .today-tag{flex:none;font-size:11px;font-weight:800;color:var(--blue);background:var(--blue-bg);
   border-radius:6px;padding:2px 7px}
 .today-a{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-/* 主页 */
-.hm{padding-top:4px;max-width:640px}
-.hm-act{display:flex;align-items:center;gap:10px;width:100%;margin-top:18px;
-  background:var(--blue);color:#fff;border-radius:13px;padding:16px 18px;
-  font-size:16px;text-align:left;box-shadow:var(--sh-l)}
-.hm-act:hover{background:var(--blue-d)}
-.hm-act b{font-weight:700}
-.hm-act-n{margin-left:auto;font-size:12px;opacity:.85}
-/* 没有到期的词时这个键不该抢眼——它是「没事干了，随便读点」，不是任务 */
-.hm-act.gh{background:var(--card);color:var(--ink);border:1px solid var(--line);box-shadow:var(--sh)}
-.hm-act.gh:hover{background:var(--line2)}
-.hm-sec{margin-top:22px}
-.hm-a{display:flex;align-items:center;gap:10px;width:100%;margin-top:7px;
-  background:var(--card);border:1px solid var(--line);border-radius:11px;
-  padding:12px 14px;text-align:left;box-shadow:var(--sh)}
-.hm-a:hover{border-color:var(--blue)}
-.hm-a-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-size:14.5px;color:var(--ink)}
-.hm-a-p{flex:none;font-size:12px;font-weight:700;color:var(--blue);
-  background:var(--blue-bg);border-radius:6px;padding:2px 7px}
-.hm-num{display:flex;align-items:center;flex-wrap:wrap;gap:16px;margin-top:24px;
-  font-size:13px;color:var(--mut)}
-.hm-num span{display:inline-flex;align-items:center;gap:5px}
 .genbox{background:var(--card);border:1px solid var(--line);border-radius:15px;
   padding:10px 20px;margin-top:20px;box-shadow:var(--sh)}
 /* 展开导入面板、或有服务商提示条时才恢复正常内边距 */
