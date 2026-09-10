@@ -866,14 +866,26 @@ ${hint || ""}
 如果实在无法获取该页面的英文内容，返回：{"error":"一句话中文原因"}`;
   const data = await callClaude(prompt, apiKey, model, true, providerId);
   if (data.error || !data.content) throw new Error("empty");
-  // 没有任何搜索引用 = 根本没去读这个页面，正文多半是编的
-  if (!(data.__cites || []).length) throw new Error("nocite");
+  /* 任意搜索引用不能证明模型读的是用户给的这页。必须有同源、同路径、
+     同查询参数的引用，才允许把内容标作该网址的来源。 */
+  const cite = (data.__cites || []).find((c) => samePage(c.url, url));
+  if (!cite) throw new Error("sourceMismatch");
   if ((data.content.match(/[A-Za-z]/g) || []).length < 40) throw new Error("thin");
-  return { title: data.title || "", content: data.content };
+  return { title: data.title || "", content: data.content, cite };
 }
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch (e) { return "网页"; }
+}
+
+function samePage(a, b) {
+  try {
+    const clean = (u) => {
+      const x = new URL(u);
+      return `${x.protocol}//${x.hostname.toLowerCase()}${x.pathname.replace(/\/$/, "")}${x.search}`;
+    };
+    return clean(a) === clean(b);
+  } catch (e) { return false; }
 }
 
 /* 给设备语音打分：神经/在线/云端音色优先，机器人音色靠后 */
@@ -1020,6 +1032,9 @@ export default function App() {
 
   const [tabs, setTabs] = useState([]);                 // [{id,title,content,cn_intro,topic,level,woven[],imported,trans}]
   const [activeId, setActiveId] = useState(null);
+  /* 「我正在主页」是一件独立的事，不能拿 activeId=null 表示——那样一进主页
+     就把「我在读哪篇」一起丢了，再点「阅读」没东西可回。文章始终留着。 */
+  const [homeMode, setHomeMode] = useState(false);
   const article = useMemo(() => tabs.find((t) => t.id === activeId) || null, [tabs, activeId]);
 
   /* 当前正在读的那一章。全篇存在 article.chapters 里，
@@ -1053,6 +1068,13 @@ export default function App() {
       return false;
     }
     return true;
+  }
+  /* 不猜 localStorage 的剩余空间：浏览器配额以及其他应用数据都不稳定。
+     先尝试保存候选快照；失败时不更新内存 UI，避免刷新后“文章消失”。 */
+  function persistTabs(nextTabs, nextActiveId) {
+    if (sSet(TABS_KEY, { tabs: nextTabs, activeId: nextActiveId })) return true;
+    showToast("浏览器存储空间不足：这篇文章没有打开。请先关闭或删除一些长文后再试");
+    return false;
   }
   /* 文章要被销毁前先留一份。同一篇重复归档时按 id 去重并提到最前，
      免得同一篇在「读过的」里出现好几遍。 */
@@ -1090,7 +1112,9 @@ export default function App() {
     hardStop();
     const art = { ...h, ch: 0, trans: {} };
     delete art.readAt;
-    setTabs((ts) => [...ts, art]);
+    const nextTabs = [...tabs, art];
+    if (!persistTabs(nextTabs, h.id)) return;
+    setTabs(nextTabs);
     setActiveId(h.id);
     setView("read");
     setQuiz({ st: "idle" });
@@ -1105,6 +1129,11 @@ export default function App() {
     setHistory((hs) => hs.filter((h) => h.id !== id));
     showToast("已从「读过的」移除");
   }
+
+  /* 生成、导入、教材取来读、点继续读……凡是换了文章的地方都会动 activeId，
+     在这里统一退出主页模式，比在每个入口补一句可靠——漏一处就会出现
+     「文章已经生成好了，却还停在主页」。 */
+  useEffect(() => { if (activeId) setHomeMode(false); }, [activeId]);
 
   function switchTab(id) {
     if (id === activeId) return;
@@ -1171,6 +1200,12 @@ export default function App() {
   const [lvHint, setLvHint] = useState(null); // {dir:"up"|"down", to:难度id, label}
 
   const cacheRef = useRef(new Map());
+  // 每条异步通道只允许最新请求更新界面，避免慢请求覆盖新操作的结果。
+  const dictReqRef = useRef(0);
+  const articleReqRef = useRef(0);
+  const importReqRef = useRef(0);
+  const quizReqRef = useRef(0);
+  const transReqRef = useRef(0);
   /* 词级词典缓存，落地 localStorage。cacheRef 的键带句子，换篇文章就失效，
      且刷新即清空——同一个词反复花钱查。这份只按单词存，跨文章跨会话都能命中。
      存进来的条目一律剥掉 context_cn：那是针对某一句的解释，套到别的句子上会误导。 */
@@ -1496,6 +1531,7 @@ export default function App() {
     }
     const wantNewTab = !!(opts && opts.newTab) || !activeId;
     if (wantNewTab && !canOpenNewTab()) return;
+    const request = ++articleReqRef.current;
 
     /* 上一篇几乎没查词 = 偏简单。这个判断只能在读完离开时下——读到一半
        点得少，可能是后面还没读。所以放在生成下一篇的时刻。 */
@@ -1531,6 +1567,7 @@ export default function App() {
 
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
+      if (request !== articleReqRef.current) return;
       if (!data.title || !data.content) throw new Error("bad");
 
       // 实际检测哪些生词真的被织进来了
@@ -1547,8 +1584,6 @@ export default function App() {
         );
       }
 
-      // 原地替换会把当前这篇彻底覆盖掉，先归档
-      if (!wantNewTab) archive(tabs.find((t) => t.id === activeId));
       const tabId = wantNewTab ? "t" + Date.now() : activeId;
       const art = {
         id: tabId,
@@ -1562,7 +1597,11 @@ export default function App() {
         level: theLevel,
         woven,
       };
-      setTabs((ts) => (wantNewTab ? [...ts, art] : ts.map((x) => (x.id === activeId ? art : x))));
+      const nextTabs = wantNewTab ? [...tabs, art] : tabs.map((x) => (x.id === activeId ? art : x));
+      if (!persistTabs(nextTabs, tabId)) return;
+      // 原地替换会把当前这篇彻底覆盖掉，确认新快照能存下后再归档。
+      if (!wantNewTab) archive(tabs.find((t) => t.id === activeId));
+      setTabs(nextTabs);
       setActiveId(tabId);
       setLevel(theLevel);
       setView("read");
@@ -1582,9 +1621,9 @@ export default function App() {
       });
       window.scrollTo({ top: 0 });
     } catch (e) {
-      setGenError(errText(e, providerId));
+      if (request === articleReqRef.current) setGenError(errText(e, providerId));
     } finally {
-      setGenLoading(false);
+      if (request === articleReqRef.current) setGenLoading(false);
     }
   }
 
@@ -1615,6 +1654,7 @@ export default function App() {
     const q = (term || "").trim();
     if (!q) return;
     if (looksLikeSentence(q)) { translateText(q); return; }
+    const request = ++dictReqRef.current;
     lastLookupRef.current = [term, sentence, key];
     setDict({ status: "loading", term: q, key, sent: sentence });
     openDict();
@@ -1631,6 +1671,7 @@ export default function App() {
 
     const cacheKey = ql + "||" + (sentence || "");
     const finish = (data, local) => {
+      if (request !== dictReqRef.current) return;
       /* 计数只能先按「你输进去的那串字」记——查之前谁也不知道正确的词是什么。
          模型判定拼错了，就把这一笔挪到正确拼写名下：不然 recieve 和 receive
          各算一次，「这个词你查过 N 次」永远凑不齐，统计里还会多出一个
@@ -1717,6 +1758,7 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
     }
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
+      if (request !== dictReqRef.current) return;
       if (!data.type) throw new Error("bad");
       /* 模型认定这压根不是个词。到此为止：不写缓存、不留计数、不给收藏。
          给一串乱码编一条像模像样的释义，比查不到糟得多——用户会当真。 */
@@ -1736,7 +1778,7 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
       saveDictCache(dictCacheRef.current);
       finish(data);
     } catch (e) {
-      setDict({ status: "error", term: q, key, sent: sentence, msg: errText(e, providerId) });
+      if (request === dictReqRef.current) setDict({ status: "error", term: q, key, sent: sentence, msg: errText(e, providerId) });
     }
   }
 
@@ -1778,6 +1820,7 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
   async function translateText(raw) {
     let text = (raw || "").trim();
     if (!text) return;
+    const request = ++dictReqRef.current;
     const trunc = text.length > 700;
     if (trunc) text = text.slice(0, 700);
     setSelTip(null);
@@ -1786,7 +1829,7 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
     openDict();
     const cacheKey = "T||" + text;
     if (cacheRef.current.has(cacheKey)) {
-      setDict({ status: "ok", term: short, data: cacheRef.current.get(cacheKey) });
+      if (request === dictReqRef.current) setDict({ status: "ok", term: short, data: cacheRef.current.get(cacheKey) });
       return;
     }
     const zh = /[\u4e00-\u9fff]/.test(text);
@@ -1797,12 +1840,13 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
 {"type":"tr","dir":"${zh ? "zh2en" : "en2zh"}","src":"原文","dst":"译文","note":"一句话点出翻译要点或地道表达（没有可为 null）"}`;
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
+      if (request !== dictReqRef.current) return;
       if (data.type !== "tr" || !data.dst) throw new Error("bad");
       if (trunc) data.trunc = true;
       cacheRef.current.set(cacheKey, data);
       setDict({ status: "ok", term: short, data });
     } catch (e) {
-      setDict({ status: "error", term: short, trFail: raw, msg: errText(e, providerId) });
+      if (request === dictReqRef.current) setDict({ status: "error", term: short, trFail: raw, msg: errText(e, providerId) });
     }
   }
 
@@ -1948,11 +1992,12 @@ ${historyLine ? `目前的对话：\n${historyLine}` : "对话还没开始，请
   async function analyzeSentence(sentence) {
     const s = (sentence || "").trim();
     if (!s) return;
+    const request = ++dictReqRef.current;
     setDict({ status: "loading", term: "整句解析", sentMode: true });
     openDict();
     const cacheKey = "S||" + s;
     if (cacheRef.current.has(cacheKey)) {
-      setDict({ status: "ok", term: s, data: cacheRef.current.get(cacheKey) });
+      if (request === dictReqRef.current) setDict({ status: "ok", term: s, data: cacheRef.current.get(cacheKey) });
       return;
     }
     const prompt = `你是耐心的英语语法老师。为中国学习者解析这个句子：
@@ -1964,11 +2009,12 @@ ${historyLine ? `目前的对话：\n${historyLine}` : "对话还没开始，请
 parts 按语序给 3-6 项，覆盖整句主干和关键修饰。`;
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
+      if (request !== dictReqRef.current) return;
       if (data.type !== "sent") throw new Error("bad");
       cacheRef.current.set(cacheKey, data);
       setDict({ status: "ok", term: s, data });
     } catch (e) {
-      setDict({ status: "error", term: "整句解析", sentFail: s, msg: errText(e, providerId) });
+      if (request === dictReqRef.current) setDict({ status: "error", term: "整句解析", sentFail: s, msg: errText(e, providerId) });
     }
   }
   function backToWord() {
@@ -1997,6 +2043,7 @@ parts 按语序给 3-6 项，覆盖整句主干和关键修饰。`;
   /* ---- 读后小测 ---- */
   async function startQuiz() {
     if (!article || quiz.st === "loading") return;
+    const request = ++quizReqRef.current;
     setQuiz({ st: "loading" });
     const focus = [
       ...new Set([...(article.woven || []), ...clickedRef.current]),
@@ -2015,13 +2062,14 @@ ${curText}
 题干用中文提问（考察的英文词/句可直接引用原文），answer 是正确选项的下标 0-3。`;
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
+      if (request !== quizReqRef.current) return;
       const qs = (data.questions || []).filter(
         (x) => x.q && Array.isArray(x.options) && x.options.length >= 2
       );
       if (!qs.length) throw new Error("bad");
       setQuiz({ st: "on", qs, i: 0, sel: null, score: 0, missed: [] });
     } catch (e) {
-      setQuiz({ st: "err" });
+      if (request === quizReqRef.current) setQuiz({ st: "err" });
     }
   }
   function pickOption(oi) {
@@ -2066,7 +2114,9 @@ ${curText}
     if (!canOpenNewTab()) return;
     hardStop();
     const id = "t" + Date.now();
-    setTabs((ts) => [...ts, { ...art, id }]);
+    const nextTabs = [...tabs, { ...art, id }];
+    if (!persistTabs(nextTabs, id)) return false;
+    setTabs(nextTabs);
     setActiveId(id);
     setView("read");
     setQuiz({ st: "idle" });
@@ -2085,6 +2135,7 @@ ${curText}
     });
     window.scrollTo({ top: 0 });
     showToast("导入成功，点单词即可查词");
+    return true;
   }
 
   function importFromText(raw, label) {
@@ -2130,6 +2181,7 @@ ${curText}
       return;
     }
     if (impBusy) return;
+    const request = ++importReqRef.current;
     setImpBusy(true);
     setImpErr("");
     try {
@@ -2137,22 +2189,25 @@ ${curText}
         apiKey, model, providerId, maxWords: FETCH_WORDS,
         hint: "如果它是视频页面，请尽力找到其英文字幕、台词或内容简介。",
       });
+      if (request !== importReqRef.current) return;
       const chs = splitChapters(data.content);
       finishImport({
         title: data.title || hostOf(url),
         chapters: chs, ch: 0, trans: {},
         srcUrl: url, srcSite: hostOf(url),
-        cn_intro: chs.length > 1 ? `抓到约 ${countWords(data.content)} 词，已分成 ${chs.length} 章` : "",
+        cn_intro: `AI 从可核对来源摘录约 ${countWords(data.content)} 词，建议打开原文核对`
+          + (chs.length > 1 ? `，已分成 ${chs.length} 章` : ""),
         topic: hostOf(url), level, imported: true,
       });
     } catch (e) {
+      if (request !== importReqRef.current) return;
       setImpErr(
-        e.message === "nocite"
-          ? "没有真正抓到这个页面（模型没返回任何访问记录），内容不可信，已放弃。把正文复制过来用「粘贴文本」导入最稳"
+        e.message === "sourceMismatch"
+          ? "没有拿到这个网址本身的可核对引用，不能把模型返回内容冒充为该页正文。请复制正文后用「粘贴文本」导入"
           : "没抓到这个页面的英文内容——最稳的办法：把正文（或视频字幕）复制过来，用「粘贴文本」导入"
       );
     } finally {
-      setImpBusy(false);
+      if (request === importReqRef.current) setImpBusy(false);
     }
   }
 
@@ -2167,6 +2222,7 @@ ${curText}
       return;
     }
     if (!canOpenNewTab()) return;
+    const request = ++importReqRef.current;
     setRealBusy(true);
     setRealErr("");
     const cat = catOf(chipCat);
@@ -2190,6 +2246,7 @@ ${curText}
 如果搜不到可靠的，返回：{"error":"一句话中文原因"}`;
     try {
       const data = await callClaude(prompt, apiKey, model, true, providerId);
+      if (request !== importReqRef.current) return;
       if (data.error || !data.content) throw new Error("empty");
 
       /* 出处以搜索引擎实际访问过的页面为准。
@@ -2198,8 +2255,7 @@ ${curText}
       const cites = data.__cites || [];
       if (!cites.length) throw new Error("nocite");
       const said = String(data.url || "");
-      const hit = cites.find((c) => c.url === said)
-        || cites.find((c) => hostOf(c.url) === hostOf(said))
+      const hit = cites.find((c) => samePage(c.url, said))
         || cites[0];
 
       if ((data.content.match(/[A-Za-z]/g) || []).length < 200) throw new Error("thin");
@@ -2213,20 +2269,21 @@ ${curText}
         srcDate: data.date || "",
         // 模型报的网址和真正搜到的对不上时，如实说出来，别假装一致
         cn_intro: `来自 ${site} 的真实文章${data.date ? `（${data.date}）` : ""}，`
-          + `正文为原文摘录，约 ${countWords(data.content)} 词`
+          + `正文由 AI 摘录，约 ${countWords(data.content)} 词，请打开来源核对`
           + (chs.length > 1 ? `，已分成 ${chs.length} 章。` : "。")
           + (said && said !== hit.url ? "注意：模型自报的网址与实际搜到的页面不一致，已改用实际页面。" : "")
           + "点上方来源链接可核对原文",
         topic: (typeof theTopic === "string" && theTopic.trim()) || cat.name, level, imported: true,
       });
     } catch (e) {
+      if (request !== importReqRef.current) return;
       setRealErr(
         e.message === "nocite"
           ? "这次没有真正联网搜索（没拿到任何搜索结果），拿不到可核对的出处，不予采用。再点一次试试；一直这样的话检查服务商是否支持联网"
           : "没搜到合适的真实文章。换个说法或换个分类再试；实在找不到就用「AI 现写」，但那是编的"
       );
     } finally {
-      setRealBusy(false);
+      if (request === importReqRef.current) setRealBusy(false);
     }
   }
 
@@ -2261,13 +2318,12 @@ ${curText}
 
     const hit = bookCacheRef.current.get(key);
     if (hit && (hit.chapters || []).length) {
-      finishImport({
+      if (finishImport({
         title: hit.title, chapters: hit.chapters, ch: 0, trans: {},
         srcUrl: b.srcUrl, srcSite: b.src,
         cn_intro: `本地已存的正文（约 ${hit.words} 词${hit.chapters.length > 1 ? `，${hit.chapters.length} 章` : ""}），没有重新联网`,
         topic: hit.title, level, imported: true,
-      });
-      go("read");
+      })) go("read");
       return;
     }
 
@@ -2289,7 +2345,7 @@ ${curText}
       setCachedBooks(nx);
       if (!ok) showToast("正文没能存下来（存储写满了），这次还能读");
 
-      finishImport({
+      if (finishImport({
         title: b.title, chapters: chs, ch: 0, trans: {},
         srcUrl: b.srcUrl, srcSite: b.src,
         cn_intro: `${b.author} · ${b.book}，约 ${words} 词`
@@ -2297,8 +2353,7 @@ ${curText}
           + `。许可：${b.lic}`
           + (ok ? "。已存本地，下次点开不用再联网" : ""),
         topic: b.title, level, imported: true,
-      });
-      go("read");
+      })) go("read");
     } catch (e) {
       setReadErr(e.message === "thin"
         ? "这一篇的正文是空的，可能是语料库出了问题。换一篇试试"
@@ -2348,6 +2403,7 @@ ${curText}
     if (showTrans) { setShowTrans(false); return; }
     if (curTrans) { setShowTrans(true); return; }
     if (transBusy) return;
+    const request = ++transReqRef.current;
     setTransBusy(true);
     const paras = curText.split(/\n+/).map((p) => p.trim()).filter(Boolean);
     const prompt = `把下面的英文文章逐段翻译成简洁、自然的中文。原文共 ${paras.length} 段，请保持相同的分段。
@@ -2359,6 +2415,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
 数组长度必须为 ${paras.length}。`;
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
+      if (request !== transReqRef.current) return;
       let tr = data.trans;
       if (!Array.isArray(tr) || !tr.length) throw new Error("bad");
       if (tr.length > paras.length) {
@@ -2366,12 +2423,14 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
       }
       while (tr.length < paras.length) tr.push("");
       // 译文按章号存，换章不会串台
-      setTabs((ts) => ts.map((x) => (x.id === article.id ? { ...x, trans: { ...x.trans, [chIdx]: tr } } : x)));
+      const nextTabs = tabs.map((x) => (x.id === article.id ? { ...x, trans: { ...x.trans, [chIdx]: tr } } : x));
+      if (!persistTabs(nextTabs, activeId)) return;
+      setTabs(nextTabs);
       setShowTrans(true);
     } catch (e) {
-      showToast("翻译失败了，再点一次重试");
+      if (request === transReqRef.current) showToast("翻译失败了，再点一次重试");
     } finally {
-      setTransBusy(false);
+      if (request === transReqRef.current) setTransBusy(false);
     }
   }
 
@@ -2599,14 +2658,14 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
         </button>
 
         <nav className="snav" aria-label="视图切换">
-          {/* 主页就是「今天想读点什么」那一屏。它和阅读共用 read 视图，
-              靠有没有打开文章来分：没文章＝你在主页，有文章＝你在读。
-              所以点主页要先把当前文章放下（它还在「最近打开」里，点得回去）。 */}
-          <button className={view === "read" && !article ? "sl on" : "sl"}
-            onClick={() => { openBlankTab(); go("read"); }}>
+          {/* 主页就是「今天想读点什么」那一屏，和阅读共用 read 视图。
+              进主页只是把正文暂时盖住，正在读的那篇原封不动，点「阅读」就回去。 */}
+          <button className={view === "read" && (homeMode || !article) ? "sl on" : "sl"}
+            onClick={() => { setHomeMode(true); go("read"); }}>
             <Home size={16} /> 主页
           </button>
-          <button className={view === "read" && article ? "sl on" : "sl"} onClick={() => go("read")}>
+          <button className={view === "read" && article && !homeMode ? "sl on" : "sl"}
+            onClick={() => { setHomeMode(false); go("read"); }}>
             <BookOpen size={16} /> 阅读
           </button>
           <button
@@ -2646,7 +2705,8 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
           {tabs.length === 0 && <p className="sempty">还没有文章</p>}
           {tabs.map((t) => (
             <div key={t.id} className={view === "read" && t.id === activeId ? "st on" : "st"}>
-              <button className="st-b" onClick={() => { switchTab(t.id); go("read"); }} title={t.title}>
+              <button className="st-b"
+                onClick={() => { switchTab(t.id); setHomeMode(false); go("read"); }} title={t.title}>
                 {t.imported && <FileUp size={11} />}
                 <span className="st-tt">{t.title || "未命名"}</span>
                 {t.chapters?.length > 1 && (
@@ -2793,7 +2853,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
             />
           ) : (
             <>
-              {!article && !genLoading ? (
+              {(homeMode || !article) && !genLoading ? (
             /* ---- 空状态 / 生成器 ---- */
             <div className="home">
               <h1 className="home-t">今天想读点什么？</h1>
