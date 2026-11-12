@@ -377,9 +377,11 @@ const FONT_SIZES = [15, 17, 19, 21, 23];
    注意不能只看状态码：Google Gemini 把「密钥无效」报成 400，
    只靠状态码会归到「未知错误」，给用户毫无帮助的提示。 */
 function codeToErr(code, msg) {
+  if (code === 403 && /terms? of service|prohibit|region|country|location|geo.?restrict|ip address/i.test(msg || "")) return "ACCESS";
   if (/api[\s_-]?key|unauthoriz|authenticat|invalid.*credential/i.test(msg || "")) return "KEY";
   if (/quota|insufficient|balance|billing|欠费|余额/i.test(msg || "")) return "CREDIT";
-  if (code === 401 || code === 403) return "KEY";
+  if (code === 401) return "KEY";
+  if (code === 403) return "ACCESS";
   if (code === 402) return "CREDIT";
   if (code === 429) return "RATE";
   return "API";
@@ -405,7 +407,7 @@ async function postOnce(url, headers, body) {
   const errObj = data.error;
   if (errObj || !res.ok) {
     const msg = (errObj && (errObj.message || errObj.type)) || "";
-    const err = new Error(codeToErr((errObj && errObj.code) || res.status, msg));
+    const err = new Error(codeToErr(res.ok ? (errObj && errObj.code) || res.status : res.status, msg));
     err.detail = msg;
     throw err;
   }
@@ -516,7 +518,7 @@ async function fetchModels(apiKey, providerId) {
   try { data = unwrap(await res.json()); } catch (e) { throw new Error("API"); }
   if (!res.ok || data.error) {
     const msg = (data.error && (data.error.message || data.error.type)) || "";
-    throw new Error(codeToErr((data.error && data.error.code) || res.status, msg));
+    throw new Error(codeToErr(res.ok ? (data.error && data.error.code) || res.status : res.status, msg));
   }
   const list = data.data || data.models || [];
   const ids = list.map((m) => (typeof m === "string" ? m : m.id || m.name)).filter(Boolean);
@@ -530,6 +532,7 @@ function errText(e, providerId) {
     case "KEY": return `API Key 无效或没有权限，去设置里检查一下（应该是 ${p.keyHint} 这样的格式）。`;
     case "CREDIT": return `${p.name} 账户余额不足，去 ${p.site} 充值后再试。`;
     case "RATE": return "请求太频繁，等几秒再试一次。";
+    case "ACCESS": return `${p.name} 拒绝了请求，可能是地区、网络出口或模型权限限制。请查看服务商返回的限制说明，或换一个可用的模型或网络。`;
     case "NET": return p.proxy
       ? `连不上 ${p.name} 服务器，检查网络（国内使用需要开代理），然后重试。`
       : `连不上 ${p.name} 服务器，检查一下网络再重试。`;
@@ -888,6 +891,15 @@ function samePage(a, b) {
   } catch (e) { return false; }
 }
 
+function validQuizQuestions(qs) {
+  return Array.isArray(qs) && qs.length === 3 && qs.every((q) =>
+    q && typeof q.q === "string" && q.q.trim() &&
+    Array.isArray(q.options) && q.options.length === 4 &&
+    q.options.every((o) => typeof o === "string" && o.trim()) &&
+    Number.isInteger(q.answer) && q.answer >= 0 && q.answer < 4
+  );
+}
+
 /* 给设备语音打分：神经/在线/云端音色优先，机器人音色靠后 */
 function scoreVoice(v) {
   const n = (v.name || "").toLowerCase();
@@ -1052,13 +1064,8 @@ export default function App() {
     const n = Math.max(0, Math.min(next, chapters.length - 1));
     if (n === chIdx) return;
     hardStop();
+    resetReadingContext();
     setTabs((ts) => ts.map((x) => (x.id === article.id ? { ...x, ch: n } : x)));
-    // 换章等于换了篇文章，小测和译文开关都得归零
-    setQuiz({ st: "idle" });
-    setShowTrans(false);
-    clickedRef.current = new Set();
-    setClicks(0);
-    setLvHint(null);
     window.scrollTo({ top: 0 });
   }
 
@@ -1091,6 +1098,13 @@ export default function App() {
   }
 
   function closeTab(id) {
+    // 即使关闭的是后台标签，也不能让待返回的译文用旧 tabs 快照把它写回来。
+    ++transReqRef.current;
+    setTransBusy(false);
+    if (id === activeId) {
+      resetReadingContext();
+      cancelArticleGeneration();
+    }
     archive(tabs.find((t) => t.id === id));
     setTabs((ts) => {
       const next = ts.filter((t) => t.id !== id);
@@ -1114,14 +1128,11 @@ export default function App() {
     delete art.readAt;
     const nextTabs = [...tabs, art];
     if (!persistTabs(nextTabs, h.id)) return;
+    resetReadingContext();
+    cancelArticleGeneration();
     setTabs(nextTabs);
     setActiveId(h.id);
     setView("read");
-    setQuiz({ st: "idle" });
-    setShowTrans(false);
-    clickedRef.current = new Set();
-    setClicks(0);
-    setLvHint(null);
     window.scrollTo({ top: 0 });
   }
 
@@ -1136,12 +1147,17 @@ export default function App() {
   useEffect(() => { if (activeId) setHomeMode(false); }, [activeId]);
 
   function switchTab(id) {
+    setHomeMode(false);
     if (id === activeId) return;
     hardStop();
+    resetReadingContext();
+    cancelArticleGeneration();
     setActiveId(id);
   }
   function openBlankTab() {
     hardStop();
+    resetReadingContext();
+    cancelArticleGeneration();
     setActiveId(null);
   }
   const [genLoading, setGenLoading] = useState(false);
@@ -1206,6 +1222,7 @@ export default function App() {
   const importReqRef = useRef(0);
   const quizReqRef = useRef(0);
   const transReqRef = useRef(0);
+  const wordChatReqRef = useRef(0);
   /* 词级词典缓存，落地 localStorage。cacheRef 的键带句子，换篇文章就失效，
      且刷新即清空——同一个词反复花钱查。这份只按单词存，跨文章跨会话都能命中。
      存进来的条目一律剥掉 context_cn：那是针对某一句的解释，套到别的句子上会误导。 */
@@ -1216,6 +1233,32 @@ export default function App() {
   const lastWordRef = useRef(null);   // 从整句解析返回单词卡
   const clickedRef = useRef(new Set()); // 本篇点过的词（喂给小测）
   const toastRef = useRef(null);
+
+  function resetReadingContext() {
+    ++dictReqRef.current;
+    ++quizReqRef.current;
+    ++transReqRef.current;
+    ++wordChatReqRef.current;
+    setDict({ status: "idle" });
+    setCtxBusy(false);
+    setWchat({ word: null, msgs: [], busy: false });
+    setQuiz({ st: "idle" });
+    setTransBusy(false);
+    setShowTrans(false);
+    clickedRef.current = new Set();
+    setClicks(0);
+    setLvHint(null);
+    setSelTip(null);
+    lastLookupRef.current = null;
+    lastWordRef.current = null;
+  }
+
+  function cancelArticleGeneration() {
+    if (!genLoading) return;
+    ++articleReqRef.current;
+    setGenLoading(false);
+    setGenError("");
+  }
 
   /* ---- 初始化 ---- */
   useEffect(() => {
@@ -1601,14 +1644,11 @@ export default function App() {
       if (!persistTabs(nextTabs, tabId)) return;
       // 原地替换会把当前这篇彻底覆盖掉，确认新快照能存下后再归档。
       if (!wantNewTab) archive(tabs.find((t) => t.id === activeId));
+      resetReadingContext();
       setTabs(nextTabs);
       setActiveId(tabId);
       setLevel(theLevel);
       setView("read");
-      setQuiz({ st: "idle" });
-      setShowTrans(false);
-      clickedRef.current = new Set();
-      setClicks(0);
       // 提示挂到新文章上（重置之后再设，否则会被上面那行清掉）
       setLvHint(tooEasy ? { dir: "up", to: LEVELS[prevIdx + 1].id, label: LEVELS[prevIdx + 1].label } : null);
       setStats((s) => {
@@ -1655,6 +1695,8 @@ export default function App() {
     if (!q) return;
     if (looksLikeSentence(q)) { translateText(q); return; }
     const request = ++dictReqRef.current;
+    ++wordChatReqRef.current;
+    setCtxBusy(false);
     lastLookupRef.current = [term, sentence, key];
     setDict({ status: "loading", term: q, key, sent: sentence });
     openDict();
@@ -1711,9 +1753,9 @@ export default function App() {
       };
       setDict(next);
       if (data.type === "en" || data.type === "zh") lastWordRef.current = next;
-      if (data.type === "en" && wchat.word !== data.word) {
-        setWchat({ word: data.word, msgs: [], busy: false });
-      }
+      if (data.type === "en") setWchat((w) => w.word === data.word
+        ? { ...w, busy: false }
+        : { word: data.word, msgs: [], busy: false });
     };
 
     if (cacheRef.current.has(cacheKey)) {
@@ -1793,6 +1835,9 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
   async function fetchContext() {
     const d = dict.data;
     if (!d || dict.status !== "ok" || !dict.sent || ctxBusy) return;
+    const request = dictReqRef.current;
+    const term = dict.term;
+    const sent = dict.sent;
     setCtxBusy(true);
     try {
       const data = await callClaude(
@@ -1802,13 +1847,15 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
 {"context_cn":"该词在这句话中的准确中文含义，一句话说清"}`,
         apiKey, model, null, providerId
       );
-      if (data.context_cn) {
-        setDict((x) => (x.status === "ok" ? { ...x, data: { ...x.data, context_cn: data.context_cn } } : x));
+      if (request === dictReqRef.current && data.context_cn) {
+        setDict((x) => (x.status === "ok" && x.term === term && x.sent === sent && x.data === d
+          ? { ...x, data: { ...x.data, context_cn: data.context_cn } }
+          : x));
       }
     } catch (e) {
-      showToast(errText(e, providerId));
+      if (request === dictReqRef.current) showToast(errText(e, providerId));
     } finally {
-      setCtxBusy(false);
+      if (request === dictReqRef.current) setCtxBusy(false);
     }
   }
 
@@ -1821,6 +1868,8 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
     let text = (raw || "").trim();
     if (!text) return;
     const request = ++dictReqRef.current;
+    ++wordChatReqRef.current;
+    setCtxBusy(false);
     const trunc = text.length > 700;
     if (trunc) text = text.slice(0, 700);
     setSelTip(null);
@@ -1855,6 +1904,7 @@ tech_cn 只在该词是计算机／编程／软件界面的常用术语时才填
     const question = (q || "").trim();
     if (!question || wchat.busy || !wchat.word) return;
     const word = wchat.word;
+    const request = ++wordChatReqRef.current;
     const history = wchat.msgs.slice(-4)
       .map((m) => (m.role === "q" ? "学习者问过：" : "你答过：") + m.t)
       .join("\n");
@@ -1868,12 +1918,14 @@ ${history ? history + "\n" : ""}学习者现在的问题：${question}
 words 按相关度最多给 5 个；如果回答里没有值得收藏的词就给空数组。`;
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
+      if (request !== wordChatReqRef.current) return;
       if (!data.answer) throw new Error("bad");
       setWchat((w) => ({
         ...w, busy: false,
         msgs: [...w.msgs, { role: "a", t: data.answer, words: Array.isArray(data.words) ? data.words.slice(0, 5) : [] }],
       }));
     } catch (e) {
+      if (request !== wordChatReqRef.current) return;
       setWchat((w) => ({
         ...w, busy: false,
         msgs: [...w.msgs, { role: "a", t: "这条没答上来，换个问法再试试。", words: [] }],
@@ -1993,6 +2045,8 @@ ${historyLine ? `目前的对话：\n${historyLine}` : "对话还没开始，请
     const s = (sentence || "").trim();
     if (!s) return;
     const request = ++dictReqRef.current;
+    ++wordChatReqRef.current;
+    setCtxBusy(false);
     setDict({ status: "loading", term: "整句解析", sentMode: true });
     openDict();
     const cacheKey = "S||" + s;
@@ -2063,10 +2117,8 @@ ${curText}
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
       if (request !== quizReqRef.current) return;
-      const qs = (data.questions || []).filter(
-        (x) => x.q && Array.isArray(x.options) && x.options.length >= 2
-      );
-      if (!qs.length) throw new Error("bad");
+      if (!validQuizQuestions(data.questions)) throw new Error("bad");
+      const qs = data.questions;
       setQuiz({ st: "on", qs, i: 0, sel: null, score: 0, missed: [] });
     } catch (e) {
       if (request === quizReqRef.current) setQuiz({ st: "err" });
@@ -2116,14 +2168,11 @@ ${curText}
     const id = "t" + Date.now();
     const nextTabs = [...tabs, { ...art, id }];
     if (!persistTabs(nextTabs, id)) return false;
+    resetReadingContext();
+    cancelArticleGeneration();
     setTabs(nextTabs);
     setActiveId(id);
     setView("read");
-    setQuiz({ st: "idle" });
-    setShowTrans(false);
-    clickedRef.current = new Set();
-    setClicks(0);
-    setLvHint(null);
     setImpOpen(false);
     setImpErr("");
     setImpText("");
@@ -2255,23 +2304,21 @@ ${curText}
       const cites = data.__cites || [];
       if (!cites.length) throw new Error("nocite");
       const said = String(data.url || "");
-      const hit = cites.find((c) => samePage(c.url, said))
-        || cites[0];
+      const hit = cites.find((c) => samePage(c.url, said));
+      if (!hit) throw new Error("sourceMismatch");
 
       if ((data.content.match(/[A-Za-z]/g) || []).length < 200) throw new Error("thin");
       const chs = splitChapters(data.content);
-      const site = data.site || hostOf(hit.url);
+      const site = hostOf(hit.url);
       finishImport({
         title: data.title || hit.title || "Untitled",
         chapters: chs, ch: 0, trans: {},
         srcUrl: hit.url,
         srcSite: site,
         srcDate: data.date || "",
-        // 模型报的网址和真正搜到的对不上时，如实说出来，别假装一致
         cn_intro: `来自 ${site} 的真实文章${data.date ? `（${data.date}）` : ""}，`
           + `正文由 AI 摘录，约 ${countWords(data.content)} 词，请打开来源核对`
           + (chs.length > 1 ? `，已分成 ${chs.length} 章。` : "。")
-          + (said && said !== hit.url ? "注意：模型自报的网址与实际搜到的页面不一致，已改用实际页面。" : "")
           + "点上方来源链接可核对原文",
         topic: (typeof theTopic === "string" && theTopic.trim()) || cat.name, level, imported: true,
       });
@@ -2280,6 +2327,8 @@ ${curText}
       setRealErr(
         e.message === "nocite"
           ? "这次没有真正联网搜索（没拿到任何搜索结果），拿不到可核对的出处，不予采用。再点一次试试；一直这样的话检查服务商是否支持联网"
+          : e.message === "sourceMismatch"
+            ? "模型给出的文章网址与搜索引用不一致，无法核对正文来源，未导入。请重试或换个主题"
           : "没搜到合适的真实文章。换个说法或换个分类再试；实在找不到就用「AI 现写」，但那是编的"
       );
     } finally {
@@ -2885,7 +2934,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
                         )}
                       </>
                     ) : (
-                      <button className="btn-pri small" onClick={() => setView("read")}>
+                      <button className="btn-pri small" onClick={() => { setHomeMode(false); setView("read"); }}>
                         <BookOpen size={15} /> 继续读
                       </button>
                     )}

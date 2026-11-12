@@ -75,14 +75,15 @@ if(!keys.openrouter){ var ok=get("dd-or-key"); if(ok) keys.openrouter=ok; }
 if(!models.openrouter){ var om=get("dd-or-model"); if(om){ try{om=JSON.parse(om);}catch(e){} if(typeof om==="string") models.openrouter=om; } }
 
 function mask(k){ if(!k) return "(空)"; if(k.length<14) return k.slice(0,4)+"…("+k.length+"位，偏短)"; return k.slice(0,10)+"…"+k.slice(-4)+"  共"+k.length+"位"; }
+function esc(v){ return String(v).replace(/[&<>"']/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
 
 function drawCfg(){
   var h="<pre>当前服务商: "+PROVIDERS[provider].name+"\n\n已保存密钥的服务商：\n";
   for(var id in PROVIDERS){
     var k=keys[id];
     h += "  "+(id===provider?"→ ":"  ")+PROVIDERS[id].name+
-         " : "+(k?"<span class='ok'>已配置</span> "+mask(k):"<span class='mut'>未配置</span>")+
-         (models[id]?"   模型 "+models[id]:"")+"\n";
+         " : "+(k?"<span class='ok'>已配置</span> "+esc(mask(k)):"<span class='mut'>未配置</span>")+
+         (models[id]?"   模型 "+esc(models[id]):"")+"\n";
   }
   document.getElementById("cfg").innerHTML = h+"</pre>";
 }
@@ -118,7 +119,7 @@ async function run(){
     out.innerHTML="<pre class='bad'>这家服务商（"+p.name+"）还没有保存过 API Key。\n请先在应用的设置页选中它并填好 Key，再回到这个页面。</pre>";
     return;
   }
-  out.innerHTML="<pre>正在请求 "+p.name+" 的 "+mm+" …</pre>";
+  out.innerHTML="<pre>正在请求 "+p.name+" 的 "+esc(mm)+" …</pre>";
 
   var headers, body;
   if(p.protocol==="anthropic"){
@@ -139,14 +140,14 @@ async function run(){
     status = res.status;
     raw = await res.text();
   }catch(e){
-    out.innerHTML="<pre class='bad'>请求根本没发出去（fetch 抛异常）\n"+e.name+": "+e.message+
+    out.innerHTML="<pre class='bad'>请求根本没发出去（fetch 抛异常）\n"+esc(e.name)+": "+esc(e.message)+
       "\n\n常见原因：\n  · 网络不通"+(p.proxy?"（这家需要代理，检查代理是否开着）":"")+
       "\n  · 浏览器拦截了跨域请求（确认用的是 Chrome，不是 Safari）</pre>";
     return;
   }
 
   var html = "<pre>HTTP 状态码: <b>"+status+"</b>\n\n===== 原始返回 =====\n"+
-             raw.slice(0,2500).replace(/</g,"&lt;")+"</pre>";
+             esc(raw.slice(0,2500))+"</pre>";
   var diag="";
   if(status===401) diag="<p class='bad'>→ 401：API Key 无效或被拒。去 "+p.site+" 确认密钥没写错、没过期。</p>";
   else if(status===402) diag="<p class='bad'>→ 402：账户余额不足，去 "+p.site+" 充值。</p>";
@@ -175,10 +176,10 @@ async function run(){
         if(s===-1||e2===-1){ diag="<p class='bad'>→ 返回里找不到 JSON，应用会报「出了点问题」。这个模型可能不擅长按格式输出，换一个试试。</p>"; }
         else{
           try{ JSON.parse(clean.slice(s,e2+1)); diag="<p class='ok'>→ 这个模型工作正常，JSON 能解析，可以放心用。</p>"; }
-          catch(er){ diag="<p class='bad'>→ JSON 解析失败: "+er.message+"</p>"; }
+          catch(er){ diag="<p class='bad'>→ JSON 解析失败: "+esc(er.message)+"</p>"; }
         }
       }
-    }catch(er){ diag="<p class='bad'>→ 返回不是合法 JSON: "+er.message+"</p>"; }
+    }catch(er){ diag="<p class='bad'>→ 返回不是合法 JSON: "+esc(er.message)+"</p>"; }
   }
   out.innerHTML = diag + html;
 }

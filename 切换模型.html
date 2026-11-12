@@ -53,6 +53,7 @@ var P={
 function get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 function getJSON(k){ try{ return JSON.parse(localStorage.getItem(k))||{}; }catch(e){ return {}; } }
 function setJSON(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch(e){ alert("写入失败："+e.message); return false; } }
+function esc(v){ return String(v).replace(/[&<>"']/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
 
 var cur = get("dd-provider")||"openrouter";
 if(!P[cur]) cur="openrouter";
@@ -65,7 +66,7 @@ if(!models.openrouter){ var om=get("dd-or-model"); if(om){ try{om=JSON.parse(om)
 function draw(){
   var m = models[cur]||P[cur].def;
   document.getElementById("cur").innerHTML =
-    "当前使用：<b>"+P[cur].name+"</b>　模型 <code>"+m+"</code>"+
+    "当前使用：<b>"+P[cur].name+"</b>　模型 <code>"+esc(m)+"</code>"+
     (keys[cur]?"":" <span style='color:#B5432F'>（这家还没填 API Key）</span>");
   document.getElementById("m").value = models[cur]||"";
   document.getElementById("m").placeholder = P[cur].def;
@@ -74,7 +75,7 @@ function draw(){
     var on=(id===cur), has=!!keys[id];
     h += '<div class="row'+(on?" on":"")+(has?"":" no")+'">'+
          '<div><b>'+P[id].name+'</b><div class="d">'+P[id].d+
-         (models[id]?'　·　当前模型 '+models[id]:'')+'</div></div>'+
+         (models[id]?'　·　当前模型 '+esc(models[id]):'')+'</div></div>'+
          '<button onclick="pick(\''+id+'\')"'+((on||!has)?" disabled":"")+'>'+
          (on?"使用中":(has?"切换":"未配置"))+'</button></div>';
   }
