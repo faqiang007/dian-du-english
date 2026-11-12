@@ -120,7 +120,7 @@ export function dateStr(d = new Date()) {
 export function calcStreak(log) {
   const active = (d) => {
     const e = log[dateStr(d)];
-    return e && (e.a || 0) + (e.q || 0) + (e.r || 0) + (e.t || 0) > 0;
+    return e && (e.a || 0) + (e.c || 0) + (e.q || 0) + (e.r || 0) + (e.t || 0) > 0;
   };
   let t = new Date(); t.setHours(0, 0, 0, 0);
   if (!active(t)) t = new Date(t.getTime() - DAY);

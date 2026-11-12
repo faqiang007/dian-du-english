@@ -1,85 +1,96 @@
-/* 主界面的骨架：左侧栏 + 顶条 + 中间舞台 + 右侧词典，
-   外加几个浮在最上层的小东西（划词翻译、跟读条、提示条）。 */
+/* 骨架：左边一列格子（今 温 读 测 说 藏），中间是当前这一格的内容。
+   词典是从右边滑出来的抽屉，统一输入框是盖在最上面的一层——
+   它们不属于任何一格，所以放在这里。 */
 
-import {
-  BarChart3, BookOpen, Bookmark, ChevronRight, FileUp, GraduationCap, Home, Languages, Menu,
-  MessagesSquare, PanelLeft, Plus, RotateCcw, Search, Settings, Turtle, X,
-} from "lucide-react";
-import { BooksView } from "./Books.jsx";
+import { useEffect, useRef, useState } from "react";
+import { ChevronRight, Languages, RotateCcw, Search, Settings, Turtle, X } from "lucide-react";
+import { FOUR, todayFour } from "../lib/day.js";
+import { DeskView } from "./Desk.jsx";
 import { DictPanel } from "./Dict.jsx";
-import { HomeView } from "./Home.jsx";
+import { KeepView } from "./Keep.jsx";
+import { Omni } from "./Omni.jsx";
+import { QuizView } from "./Quiz.jsx";
 import { ReaderView } from "./Reader.jsx";
-import { ReviewView } from "./Review.jsx";
 import { SettingsView } from "./Settings.jsx";
-import { StatsView } from "./Stats.jsx";
 import { TalkView } from "./Talk.jsx";
-import { VocabView } from "./Vocab.jsx";
+import { TodayView } from "./Today.jsx";
+import { WarmView } from "./Warm.jsx";
+
+/* 窄屏判断：手机上没有地方放「浮在词旁边的小卡」，直接用整屏的词典 */
+function useNarrow() {
+  const q = "(max-width: 880px)";
+  const [narrow, setNarrow] = useState(() => window.matchMedia(q).matches);
+  useEffect(() => {
+    const m = window.matchMedia(q);
+    const on = () => setNarrow(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}
 
 export function Shell({ app }) {
   const {
-    prefs, setPrefs, appStyle, navOpen, setNavOpen, setDictOpen, view, article, homeMode, genLoading,
-    dict, dictOpen, openDict, search, setSearch, doSearch,
+    appStyle, view, article, homeMode, genLoading, dict, dictOpen, closeDict,
     selTip, translateText, shadow, setShadow, flatSents, playShadow, advanceShadow, exitShadow, toast,
   } = app;
+  const narrow = useNarrow();
+  const [omni, setOmni] = useState(false);
+  /* 词典的两种样子：点文中的词，先是浮在词旁边的小卡；点「展开」才滑出抽屉。
+     展开过一次就一直用抽屉，直到你把抽屉关上——说明你这会儿想细看。 */
+  const [expanded, setExpanded] = useState(false);
 
-  const atHome = view === "read" && (homeMode || !article) && !genLoading;
-  /* 词典栏什么时候占位：读文章时常驻；主页上只有真查了东西才出现——
-     空着的词典栏会把主页挤窄，却什么也没给。其他页面一律让出整幅宽度。 */
-  const dockDict = view === "read" && !prefs.dictOff && (!atHome || dict.status !== "idle");
+  /* 现在在哪一格。store 里的 view 是老名字，在这里翻译成格子。 */
+  const station = view === "review" ? "温"
+    : view === "quiz" ? "测"
+    : view === "talk" ? "说"
+    : view === "vocab" || view === "books" || view === "stats" ? "藏"
+    : view === "settings" ? "设"
+    : homeMode && !genLoading ? "今" : "读";
+  const reading = station === "读" && (article || genLoading);
+
+  const hasDict = dictOpen && dict.status !== "idle";
+  /* 能用小卡的情况：正在读文章、宽屏、查的是文中点的那个词（有位置可挂）。
+     整句解析、划词翻译、从输入框查的词没有位置，直接进抽屉。 */
+  const peek = hasDict && reading && !narrow && !expanded && !!dict.key && !dict.sentMode
+    && (dict.status !== "ok" || dict.data.type === "en");
+  const drawer = hasDict && !peek;
+  const shutDict = () => { closeDict(); setExpanded(false); };
+
+  // ⌘K / Ctrl+K 随时唤出输入框；Esc 关掉
+  useEffect(() => {
+    const key = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setOmni((o) => !o); }
+      else if (e.key === "Escape") { if (omni) setOmni(false); else if (drawer) shutDict(); }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [omni, drawer]);
 
   return (
-    <div className={prefs.navFold ? "app navfold" : "app"} style={appStyle}>
-      {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
-      <Sidebar app={app} />
+    <div className="app" style={appStyle}>
+      <Rail app={app} station={station} onOmni={() => setOmni(true)} />
 
-      <div className="main">
-        <header className="top">
-          {/* 开侧栏时收起词典抽屉：两个浮层不能同时占屏 */}
-          <button
-            className="menubtn"
-            onClick={() => {
-              // 宽屏时它负责「展开被收起的侧栏」，窄屏时负责「拉出抽屉」。
-              // 两件事一起做，不用判断当前视口——另一件在当前视口本来就是空操作。
-              setPrefs((p) => (p.navFold ? { ...p, navFold: false } : p));
-              setNavOpen(true);
-              setDictOpen(false);
-            }}
-            aria-label="展开菜单"
-          >
-            <Menu size={18} className="mb-menu" />
-            <PanelLeft size={18} className="mb-panel" />
-          </button>
-          <label className="search">
-            <Search size={14} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") doSearch(); }}
-              placeholder="查词 / 翻译句子 · 中英互查"
-              aria-label="查词"
-            />
-          </label>
-        </header>
+      <main className={drawer ? "stage with-drawer" : "stage"}>
+        {station === "今" ? <TodayView app={app} />
+          : station === "温" ? <WarmView app={app} />
+          : station === "测" ? <QuizView app={app} />
+          : station === "说" ? <TalkView app={app} />
+          : station === "藏" ? <KeepView app={app} />
+          : station === "设" ? <SettingsView app={app} />
+          : reading ? <ReaderView app={app} peek={peek} onExpand={() => setExpanded(true)} />
+          : <DeskView app={app} />}
+      </main>
 
-        <main className={dockDict ? "stage" : "stage nodict"}>
-          <section className="stage-main">
-            {view === "review" ? <ReviewView app={app} />
-              : view === "talk" ? <TalkView app={app} />
-              : view === "books" ? <BooksView app={app} />
-              : view === "stats" ? <StatsView app={app} />
-              : view === "settings" ? <SettingsView app={app} />
-              : view === "vocab" ? <VocabView app={app} />
-              : atHome ? <HomeView app={app} />
-              : <ReaderView app={app} />}
-          </section>
-          <DictPanel app={app} />
-        </main>
-      </div>
+      <DictPanel app={app} open={drawer} onClose={shutDict} />
 
-      {!dictOpen && (
-        <button className={prefs.dictOff ? "fab show" : "fab"} onClick={openDict} aria-label="打开词典">
-          <Search size={18} />
-        </button>
+      {omni && (
+        <div className="omni-layer" onMouseDown={(e) => { if (e.target === e.currentTarget) setOmni(false); }}>
+          <div className="omni-box">
+            <Omni app={app} autoFocus onDone={() => setOmni(false)} />
+            <p className="hint">回车执行第一项 · Tab 换一项 · Esc 关闭</p>
+          </div>
+        </div>
       )}
 
       {selTip && (
@@ -122,92 +133,57 @@ export function Shell({ app }) {
   );
 }
 
-/* ---------- 左侧栏 ---------- */
+/* ---------- 左边那列格子 ----------
+   温读测说四格的颜色就是今天的进度：红字是还没写的，黑字是写过的。 */
 
-function Sidebar({ app }) {
-  const {
-    navOpen, setNavOpen, setPrefs, go, view, article, homeMode, setHomeMode,
-    vocab, dueList, startReview, tabs, activeId, switchTab, closeTab, openBlankTab, streak,
-  } = app;
-  const atHome = view === "read" && (homeMode || !article);
-  const nav = (on) => (on ? "nv on" : "nv");
+function Rail({ app, station, onOmni }) {
+  const { go, setHomeMode, stats, dueList, streak, view } = app;
+  const { done } = todayFour(stats, dueList.length);
+  // 记住上次在「藏」里看的是哪一页，回来时还在那一页
+  const keepRef = useRef("vocab");
+  if (station === "藏") keepRef.current = view;
+
+  const goto = {
+    今: () => { setHomeMode(true); go("read"); },
+    温: () => go("review"),
+    读: () => { setHomeMode(false); go("read"); },
+    测: () => go("quiz"),
+    说: () => go("talk"),
+    藏: () => go(keepRef.current),
+  };
+  const label = { 今: "今天", 温: "温故：复习到期的词", 读: "阅读", 测: "读后小测", 说: "开口：情景对话", 藏: "收藏：生词、教材、足迹" };
+  const cell = (ch) => {
+    const on = station === ch;
+    const written = FOUR.includes(ch) && done[ch];
+    return (
+      <button key={ch} className={"rail-b" + (on ? " on" : "")} onClick={goto[ch]}
+        aria-label={label[ch]} aria-current={on ? "page" : undefined} title={label[ch]}>
+        <span className={"ge" + (written ? " done" : "") + (FOUR.includes(ch) ? "" : " plain")}>{ch}</span>
+        {ch === "温" && dueList.length > 0 && <i className="rail-n">{dueList.length}</i>}
+      </button>
+    );
+  };
 
   return (
-    <aside className={navOpen ? "side open" : "side"}>
-      {/* 窄屏下侧栏占满整屏、没有遮罩可点，得给一个明确的关闭出口 */}
-      <button className="side-x" onClick={() => setNavOpen(false)} aria-label="关闭菜单">
-        <X size={18} />
-      </button>
-      {/* 宽屏专用：把侧栏整个收起，正文占满 */}
-      <button
-        className="side-fold"
-        onClick={() => setPrefs((p) => ({ ...p, navFold: true }))}
-        aria-label="收起侧栏"
-        title="收起侧栏"
-      >
-        <PanelLeft size={16} />
-      </button>
-
-      <button className="mark" onClick={() => go("read")}><i>007</i>学英语</button>
-
-      <nav className="nav" aria-label="视图切换">
-        {/* 主页就是「今天想读点什么」那一屏，和阅读共用 read 视图。
-            进主页只是把正文暂时盖住，正在读的那篇原封不动，点「阅读」就回去。 */}
-        <button className={nav(atHome)} onClick={() => { setHomeMode(true); go("read"); }}>
-          <Home size={16} /> 主页
-        </button>
-        <button className={nav(view === "read" && article && !homeMode)}
-          onClick={() => { setHomeMode(false); go("read"); }}>
-          <BookOpen size={16} /> 阅读
-        </button>
-        <button className={nav(view === "vocab")} onClick={() => go("vocab")}>
-          <Bookmark size={16} /> 生词本
-          {vocab.length > 0 && <span className="n">{vocab.length}</span>}
-        </button>
-        <button className={nav(view === "review")} onClick={() => { startReview(); setNavOpen(false); }}>
-          <RotateCcw size={16} /> 复习
-          {dueList.length > 0 && <span className="n due">{dueList.length}</span>}
-        </button>
-        <button className={nav(view === "talk")} onClick={() => go("talk")}>
-          <MessagesSquare size={16} /> 对话
-        </button>
-        <button className={nav(view === "books")} onClick={() => go("books")}>
-          <GraduationCap size={16} /> 教材
-        </button>
-        <button className={nav(view === "stats")} onClick={() => go("stats")}>
-          <BarChart3 size={16} /> 统计
-        </button>
-      </nav>
-
-      <div className="side-cap">
-        最近打开
-        <button onClick={() => { openBlankTab(); go("read"); }} aria-label="新开一页" title="新开一页">
-          <Plus size={13} />
-        </button>
+    <nav className="rail" aria-label="今日四格与导航">
+      <button className="seal" onClick={goto.今} aria-label="007学英语 · 回到今天">007</button>
+      <div className="rail-main">
+        {cell("今")}
+        <span className="rail-gap" />
+        {FOUR.map(cell)}
+        <span className="rail-gap" />
+        {cell("藏")}
       </div>
-      <div className="side-tabs">
-        {tabs.length === 0 && <p className="side-empty">还没有文章</p>}
-        {tabs.map((t) => (
-          <div key={t.id} className={view === "read" && t.id === activeId ? "tab on" : "tab"}>
-            <button className="tab-b" title={t.title}
-              onClick={() => { switchTab(t.id); setHomeMode(false); go("read"); }}>
-              {t.imported && <FileUp size={11} />}
-              <span>{t.title || "未命名"}</span>
-              {t.chapters?.length > 1 && <em>{(t.ch || 0) + 1}/{t.chapters.length}</em>}
-            </button>
-            <button className="tab-x" onClick={() => closeTab(t.id)} aria-label={`关闭「${t.title}」`}>
-              <X size={11} />
-            </button>
-          </div>
-        ))}
-      </div>
-
-      <div className="side-foot">
-        <button className={nav(view === "settings")} onClick={() => go("settings")}>
-          <Settings size={16} /> 设置
+      <div className="rail-foot">
+        <button className="rail-b" onClick={onOmni} aria-label="查词、找文章、导入（⌘K）" title="查词 / 找文章 / 导入  ⌘K">
+          <Search size={18} />
         </button>
-        {streak > 0 && <div className="streak"><b>{streak}</b>天连续学习</div>}
+        <button className={"rail-b" + (station === "设" ? " on" : "")} onClick={() => go("settings")}
+          aria-label="设置" title="设置">
+          <Settings size={18} />
+        </button>
+        {streak > 0 && <div className="rail-streak" title={`连续 ${streak} 天`}><b>{streak}</b>天</div>}
       </div>
-    </aside>
+    </nav>
   );
 }

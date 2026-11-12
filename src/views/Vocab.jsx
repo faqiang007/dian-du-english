@@ -1,14 +1,14 @@
 /* 生词本：一行一词的紧凑列表，点开才看详情。
    分三组——待复习 / 学习中 / 已掌握；已掌握的默认折起来，第一屏留给真正要看的。 */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Brain, ChevronDown, Copy, Download, MoreHorizontal, Search, Trash2, Upload, Volume2, X,
 } from "lucide-react";
 import { isMastered, rvOf, vbBrief, vbHay, vbPhon, vbWord } from "../lib/vocab.js";
 import { Boldify } from "../ui/Boldify.jsx";
 
-export function VocabView({ app }) {
+export function VocabView({ app, pick }) {
   const {
     vocab, dueList, startReview, speak, removeWord, copyVocab, downloadVocab,
     vImpOpen, setVImpOpen, vImpText, setVImpText, importVocabMd,
@@ -20,6 +20,8 @@ export function VocabView({ app }) {
   const [q, setQ] = useState("");
   const [openKey, setOpenKey] = useState(null);
   const [fold, setFold] = useState({ done: true });
+  // 在上面的描红墙上点了一个词：清单筛到它并展开
+  useEffect(() => { if (pick) { setQ(pick.w); setOpenKey(pick.key); } }, [pick]);
 
   const groups = useMemo(() => {
     const kw = q.trim().toLowerCase();
@@ -47,7 +49,7 @@ export function VocabView({ app }) {
   return (
     <div className="page">
       <div className="page-h">
-        <h1>生词本 <span className="count">{vocab.length}</span></h1>
+        <h1>清单 <span className="count">{vocab.length} 个词</span></h1>
         <div className="page-a">
           {vocab.length > 0 && (
             <button className={dueCount ? "btn pri" : "btn sec"} onClick={startReview}>
@@ -110,9 +112,9 @@ export function VocabView({ app }) {
 
       {vocab.length === 0 ? (
         <div className="empty">
-          <span className="stamp">007</span>
+          <span className="ge">词</span>
           <p>还没有生词。</p>
-          <p className="mut">读文章时点击单词，或在顶部搜索，然后点「加入生词本」。</p>
+          <p className="mut">读文章时点一个不认识的词，在浮出来的小卡上点「收进生词本」。</p>
         </div>
       ) : (
         <>
@@ -204,7 +206,7 @@ function VocabRow({ v, on, onToggle, onSpeak, onRemove, onLookup }) {
           )}
           <div className="vrow-meta">
             {r.due <= Date.now()
-              ? <span className="tag hot">待复习</span>
+              ? <span className="tag hot">今天到期</span>
               : <span className="mut">连对 {r.streak} 次 · 见过 {v.meet || 1} 次</span>}
             <button className="link quiet" onClick={() => onLookup(vbWord(d))}>
               <Search size={12} /> 重新查这个词

@@ -1,5 +1,5 @@
 /* =========================================================
-   地基 + 通用零件。
+   地基 + 通用零件（米字格、四线格、印章在 shell.css）。
    全站只有三种按钮（主 / 次 / 文字）、一种标签、一种提示条——
    要新样式之前先看这里有没有现成的，别再长出第四种按钮。
    ========================================================= */
@@ -12,8 +12,8 @@ button:disabled{opacity:.5;cursor:default}
 input,textarea,select{font:inherit;color:inherit}
 a{color:inherit}
 code{font-family:var(--mono);font-size:.92em;background:var(--line2);border-radius:4px;padding:1px 6px}
-:focus-visible{outline:2px solid var(--pen);outline-offset:2px;border-radius:4px}
-::selection{background:var(--hi-soft)}
+:focus-visible{outline:2px solid var(--red);outline-offset:2px;border-radius:4px}
+::selection{background:var(--red-wash)}
 svg{flex:none}
 
 .mut{color:var(--mut)}
@@ -45,12 +45,12 @@ svg{flex:none}
 .iconbtn:hover{color:var(--ink);background:var(--line2)}
 .iconbtn.danger:hover{color:var(--bad);background:var(--bad-bg)}
 .say{display:inline-flex;vertical-align:-2px;margin-left:6px;padding:2px;border-radius:4px;color:var(--mut)}
-.say:hover{color:var(--pen)}
+.say:hover{color:var(--red)}
 
-.link{display:inline-flex;align-items:center;gap:4px;color:var(--pen);font-weight:500;text-decoration:none}
-.link:hover:not(:disabled){text-decoration:underline;text-underline-offset:3px}
-.link.quiet{color:var(--ink2);font-weight:400;font-size:12.5px}
-.link.quiet:hover{color:var(--pen)}
+.link{display:inline-flex;align-items:center;gap:4px;color:var(--ink);font-weight:500;text-decoration:underline;text-decoration-color:var(--red-soft);text-underline-offset:3px}
+.link:hover:not(:disabled){text-decoration-color:var(--red)}
+.link.quiet{color:var(--ink2);font-weight:400;font-size:12.5px;text-decoration:none}
+.link.quiet:hover{color:var(--red)}
 
 /* ---- 标签：文章来历、词的状态 ---- */
 .tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;letter-spacing:.04em;
@@ -112,7 +112,7 @@ select.field{min-width:220px}
   border:1px solid var(--line);border-radius:99px;padding:4px 11px;background:var(--card)}
 .chip:hover:not(:disabled){border-color:var(--ink2);color:var(--ink)}
 .chip.big{font-size:13.5px;padding:8px 14px;border-radius:var(--r)}
-.chip.on{border-color:var(--ink);color:var(--ink);font-weight:600;box-shadow:inset 0 0 0 1px var(--ink)}
+.chip.on{border-color:var(--ink);background:var(--ink);color:var(--paper);font-weight:600}
 
 /* ---- 下拉菜单 ---- */
 .pop{position:relative;display:inline-flex}
@@ -132,23 +132,21 @@ select.field{min-width:220px}
 .prog{height:2px;background:var(--line);position:relative;border-radius:2px;overflow:hidden}
 .prog i{position:absolute;left:0;top:0;bottom:0;background:var(--ink);transition:width .25s}
 
-/* ---- 「007」印记：荧光笔涂过的三个数字，空状态和品牌都用它 ---- */
-.stamp,.mark i{font-family:var(--display);font-style:normal;font-weight:900;font-feature-settings:"lnum";
-  background:var(--hi);color:var(--on-hi);border-radius:2px;padding:0 6px}
-.stamp{display:inline-block;font-size:19px}
-.mark{display:flex;align-items:baseline;gap:8px;font-family:var(--display);font-size:19px;font-weight:900;letter-spacing:.5px}
 
-.empty{text-align:center;padding:72px 20px;color:var(--ink2);font-size:15px}
+
+
+
+.empty{text-align:center;padding:64px 20px;color:var(--ink2);font-size:15px}
 .empty p{margin-top:12px}
 
 /* ---- 页面容器与页头（主页、生词本、统计……共用）---- */
-.page{padding:22px var(--gutter) 120px;max-width:940px}
+.page{padding:44px var(--gutter) 120px;max-width:940px;margin:0 auto}
 .page.narrow{max-width:620px;margin:0 auto}
 .page.narrow-l{max-width:780px}
 .page-h{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;
   padding-bottom:14px;border-bottom:1px solid var(--ink);margin-bottom:22px}
-.page-h h1,.h1{font-family:var(--display);font-weight:900;letter-spacing:.01em;line-height:1.2}
-.page-h h1{font-size:30px;display:flex;align-items:baseline;gap:12px}
+.page-h h1,.h1{font-family:var(--kai);font-weight:700;letter-spacing:.02em;line-height:1.2}
+.page-h h1{font-size:34px;display:flex;align-items:baseline;gap:12px}
 .h1{font-size:40px}
 .count{font-family:var(--sans);font-size:13px;font-weight:500;color:var(--mut);letter-spacing:0}
 .page-a{display:flex;gap:8px;flex-wrap:wrap}
@@ -156,7 +154,7 @@ select.field{min-width:220px}
 
 /* 分区标题：一行衬线小标题压一条墨线，像报纸的栏目头 */
 .sect{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:46px 0 4px;padding-bottom:10px;border-bottom:1px solid var(--ink)}
-.sect h2{font-family:var(--display);font-size:21px;font-weight:900}
+.sect h2{font-family:var(--kai);font-size:22px;font-weight:700}
 .sect p{font-size:12.5px;color:var(--mut)}
 .sect-r{margin-left:auto;display:flex;gap:4px;align-items:center}
 

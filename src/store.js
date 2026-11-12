@@ -55,7 +55,7 @@ export function useStore() {
   const [activeId, setActiveId] = useState(null);
   /* 「我正在主页」是一件独立的事，不能拿 activeId=null 表示——那样一进主页
      就把「我在读哪篇」一起丢了，再点「阅读」没东西可回。文章始终留着。 */
-  const [homeMode, setHomeMode] = useState(false);
+  const [homeMode, setHomeMode] = useState(true);   // 每次打开先落在「今」：先看今天四格还差哪格
   const article = useMemo(() => tabs.find((t) => t.id === activeId) || null, [tabs, activeId]);
 
   /* 当前正在读的那一章。全篇存在 article.chapters 里，
@@ -75,6 +75,9 @@ export function useStore() {
     hardStop();
     resetReadingContext();
     setTabs((ts) => ts.map((x) => (x.id === article.id ? { ...x, ch: n } : x)));
+    /* 往下翻一章也算「今天读了」。以前只有新开一篇才记数（a），接着读一本长书
+       的人天天在读却天天是零。另记一个字段 c，不混进文章篇数里。 */
+    if (n > chIdx) bumpStat("c");
     window.scrollTo({ top: 0 });
   }
 
@@ -142,6 +145,7 @@ export function useStore() {
     setTabs(nextTabs);
     setActiveId(h.id);
     setView("read");
+    bumpStat("c"); // 重读一篇也算今天读了，理由同翻章
     window.scrollTo({ top: 0 });
   }
 
@@ -150,10 +154,6 @@ export function useStore() {
     showToast("已从「读过的」移除");
   }
 
-  /* 生成、导入、教材取来读、点继续读……凡是换了文章的地方都会动 activeId，
-     在这里统一退出主页模式，比在每个入口补一句可靠——漏一处就会出现
-     「文章已经生成好了，却还停在主页」。 */
-  useEffect(() => { if (activeId) setHomeMode(false); }, [activeId]);
 
   function switchTab(id) {
     setHomeMode(false);
@@ -179,6 +179,17 @@ export function useStore() {
   const [vocab, setVocab] = useState([]);
   const [stats, setStats] = useState({ log: {}, total: 0, lv: null });
   const [loaded, setLoaded] = useState(false);
+  /* 生成、导入、教材取来读、点继续读……凡是换了文章的地方都会动 activeId，
+     在这里统一退出主页模式，比在每个入口补一句可靠——漏一处就会出现
+     「文章已经生成好了，却还停在主页」。 */
+  /* 开机那一下例外：读存档时 activeId 也会「变」，但那不是用户换了文章，
+     不能把人从「今」直接拽进上次那篇里。bootRef 把这第一次吃掉。 */
+  const bootRef = useRef(true);
+  useEffect(() => {
+    if (!loaded) return;
+    if (bootRef.current) { bootRef.current = false; return; }
+    if (activeId) setHomeMode(false);
+  }, [activeId, loaded]);
   const [toast, setToast] = useState("");
   const [reading, setReading] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -1695,19 +1706,18 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
   return {
     activeId, addChatWord, advanceShadow, analyzeSentence, answerReview, apiKey, appStyle, article,
     askWord, backToWord, books, booksBusy, booksErr, cachedBooks, chapters, chIdx, chipCat, chips,
-    clearSetupKey, clearVocab, clicks, closeDict, closeTab, confirmClear, copyVocab, ctxBusy,
-    curMins, curText, curTrans, curWords, dict, dictIsSaved, dictOpen, doSearch, downloadVocab,
+    clearSetupKey, clearVocab, clickedRef, clicks, closeDict, closeTab, confirmClear, copyVocab,
+    ctxBusy, curMins, curText, curTrans, curWords, dict, dictIsSaved, dictOpen, downloadVocab,
     dueList, enVoices, exitShadow, exitTalk, fetchContext, fetchRealArticle, flatSents,
     generateArticle, genError, genLoading, go, gotoCh, handleImportFile, homeMode, impBusy, impErr,
     impOpen, importFromText, importFromUrl, importVocabMd, impTab, impText, impUrl, keyDraft, level,
-    loadLibrary, lookup, lvHint, lvMenu, model, modelDraft, navOpen, nextQuestion, openBlankTab,
-    openDict, openSetup, pastRead, pickOption, pickSetupProvider, playShadow, prefs, providerDraft,
-    providerId, quiz, readBook, readBusy, readErr, readIdx, reading, realBusy, realErr,
-    removeHistory, removeWord, reread, reTopicOf, retryLookup, rev, saveCurrent, savedKeys,
-    savedSurfaces, saveMissedWords, saveSetup, search, selTip, sendTalk, setChipCat, setChips,
-    setConfirmClear, setDictOpen, setHomeMode, setImpErr, setImpOpen, setImpTab, setImpText,
-    setImpUrl, setKeyDraft, setLevel, setLvHint, setLvMenu, setModelDraft, setNavOpen, setPrefs,
-    setRealErr, setRev, setSearch, setSelTip, setShadow, setShowSetup, setStats, setTalk, setTopic,
+    loadLibrary, lookup, lvHint, lvMenu, model, modelDraft, nextQuestion, openBlankTab, openSetup,
+    pastRead, pickOption, pickSetupProvider, playShadow, prefs, providerDraft, providerId, quiz,
+    readBook, readBusy, readErr, readIdx, reading, realBusy, realErr, removeHistory, removeWord,
+    reread, reTopicOf, retryLookup, rev, saveCurrent, savedKeys, savedSurfaces, saveMissedWords,
+    saveSetup, selTip, sendTalk, setChipCat, setChips, setConfirmClear, setHomeMode, setImpErr,
+    setImpTab, setImpText, setImpUrl, setKeyDraft, setLevel, setLvHint, setLvMenu, setModelDraft,
+    setPrefs, setRealErr, setRev, setSelTip, setShadow, setShowSetup, setStats, setTalk, setTopic,
     setView, setVImpOpen, setVImpText, setWeaveOn, shadow, showSetup, showToast, showTrans,
     skipReview, speak, startQuiz, startReview, startShadow, startTalk, stats, streak, switchTab,
     tabs, talk, toast, toggleReadArticle, toggleTrans, toggleWeave, topic, transBusy, translateText,

@@ -1,134 +1,130 @@
 /* =========================================================
-   骨架：侧栏 / 顶条 / 舞台 / 词典栏的摆放，以及窄屏下怎么收。
+   骨架：左边一列格子、中间的舞台、右边的词典抽屉、最上层的输入框
+   以及两样签名零件——米字格（.ge）和四线格（.four）
    ========================================================= */
-.app{display:grid;grid-template-columns:var(--side-w) minmax(0,1fr);min-height:100vh}
+
+/* ---- 米字格：一个方格，里面一个楷体字 ----
+   红字 = 还没写；.done 黑字 = 写过了；.plain = 不属于今日四格的普通格子。
+   大小用 --s 调，字跟着格子走。 */
+.ge{--s:44px;display:inline-grid;place-items:center;width:var(--s);height:var(--s);flex:none;
+  border:1.5px solid var(--grid);border-radius:3px;font-family:var(--kai);font-style:normal;font-weight:400;
+  font-size:calc(var(--s)*.68);line-height:1;color:var(--red-soft);
+  background:
+    linear-gradient(var(--grid2),var(--grid2)) center/100% 1px no-repeat,
+    linear-gradient(var(--grid2),var(--grid2)) center/1px 100% no-repeat,
+    linear-gradient(45deg,transparent calc(50% - .5px),var(--grid2) calc(50% - .5px),var(--grid2) calc(50% + .5px),transparent calc(50% + .5px)),
+    linear-gradient(-45deg,transparent calc(50% - .5px),var(--grid2) calc(50% - .5px),var(--grid2) calc(50% + .5px),transparent calc(50% + .5px))}
+.ge.done{color:var(--ink);border-color:var(--ink)}
+.ge.miss{color:var(--red);border-color:var(--red)}
+.ge.plain{color:var(--ink2);border-color:var(--line)}
+.ge.now{box-shadow:0 0 0 2px var(--paper),0 0 0 3.5px var(--ink)}
+.ge.sm{--s:28px;border-width:1px}
+.ge.big{--s:clamp(92px,12.5vw,148px);border-width:2px}
+.ge.huge{--s:112px;border-width:2px}
+
+/* ---- 四线格：英语作业本那种，单词写在上面。红的那条是基线。----
+   用在行内元素上，换行时每一行各画一套。位置按衬线字体的字形比例估的。 */
+.four{padding:0 .28em;box-decoration-break:clone;-webkit-box-decoration-break:clone;
+  background:
+    linear-gradient(var(--grid),var(--grid)) 0 calc(50% - .42em)/100% 1px no-repeat,
+    linear-gradient(90deg,var(--grid) 55%,transparent 0) 0 calc(50% - .13em)/7px 1px repeat-x,
+    linear-gradient(var(--red),var(--red)) 0 calc(50% + .33em)/100% 1px no-repeat,
+    linear-gradient(var(--grid),var(--grid)) 0 calc(50% + .56em)/100% 1px no-repeat}
+
+/* ---- 印章：品牌 ---- */
+.seal{display:inline-grid;place-items:center;width:42px;height:42px;border-radius:7px;background:var(--red);color:var(--on-red);
+  font-family:var(--display);font-size:13.5px;font-weight:700;letter-spacing:.5px;font-feature-settings:"lnum"}
+.brand{display:flex;align-items:center;gap:12px;font-family:var(--kai);font-size:24px;font-weight:700}
+.kai-h{font-family:var(--kai);font-size:38px;font-weight:700;line-height:1.25;letter-spacing:.02em}
+.red{color:var(--red)}
+
+.app{min-height:100vh}
 .app.solo{display:block}
-.main{min-width:0}
 
-/* ---- 侧栏：和纸同色，只靠一条细线分开 ----
-   层级比词典（60）高一层：窄屏时它自带遮罩，是「当前占屏的那个」。 */
-.side{position:sticky;top:0;height:100vh;z-index:70;background:var(--paper);border-right:1px solid var(--line);
-  padding:26px 14px 18px;display:flex;flex-direction:column}
-.side .mark{padding:0 10px 26px}
-.side-x,.side-fold{position:absolute;top:22px;right:10px;padding:6px;border-radius:var(--r-s);color:var(--mut);z-index:1}
-.side-x:hover,.side-fold:hover{background:var(--line2);color:var(--ink)}
-.side-x,.side-fold{display:none}
+/* ---- 左边那列格子 ---- */
+.rail{position:fixed;left:0;top:0;bottom:0;z-index:70;width:var(--rail);background:var(--paper);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;padding:16px 0 14px}
+.rail-main{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:22px}
+.rail-gap{height:14px}
+.rail-b{position:relative;display:grid;place-items:center;width:56px;height:54px;border-radius:10px;color:var(--ink2)}
+.rail-b:hover{background:var(--line2);color:var(--ink)}
+/* 当前所在的那一格：整格涂黑 */
+.rail-b.on .ge{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.rail-b.on{color:var(--ink);background:var(--line2)}
+.rail-b.on:has(.ge){background:none}
+.rail-n{position:absolute;top:1px;right:0;min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:var(--red);color:var(--on-red);
+  font-style:normal;font-size:10.5px;font-weight:700;line-height:17px;text-align:center;font-variant-numeric:tabular-nums}
+.rail-foot{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:2px}
+.rail-streak{margin-top:8px;padding-top:10px;border-top:1px solid var(--line);font-size:11px;color:var(--mut);text-align:center;line-height:1.3}
+.rail-streak b{display:block;font-family:var(--display);font-size:20px;color:var(--ink);font-feature-settings:"lnum"}
 
-.nav{display:flex;flex-direction:column;gap:1px}
-.nv{display:flex;align-items:center;gap:11px;width:100%;padding:8px 10px;border-radius:var(--r-s);
-  color:var(--ink2);font-size:14px;position:relative}
-.nv:hover{background:var(--line2);color:var(--ink)}
-.nv.on{color:var(--ink);font-weight:600}
-.nv.on::before{content:"";position:absolute;left:-14px;top:7px;bottom:7px;width:3px;background:var(--ink);border-radius:0 2px 2px 0}
-.nv .n{margin-left:auto;font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums;font-weight:400}
-.nv .n.due{color:var(--hi-text);background:var(--hi-soft);border-radius:99px;padding:0 7px;font-weight:600}
+/* ---- 舞台 ---- */
+.stage{margin-left:var(--rail);min-height:100vh;min-width:0;transition:padding-right .22s ease}
 
-.side-cap{display:flex;align-items:center;font-size:11px;letter-spacing:.14em;color:var(--mut);padding:0 4px 0 10px;margin:26px 0 6px}
-.side-cap button{margin-left:auto;display:inline-flex;padding:5px;border-radius:var(--r-s)}
-.side-cap button:hover{background:var(--line2);color:var(--ink)}
-.side-tabs{display:flex;flex-direction:column;gap:1px;overflow:auto;min-height:0}
-.side-empty{font-size:12.5px;color:var(--mut);padding:2px 10px}
-.tab{display:flex;align-items:center;border-radius:var(--r-s)}
-.tab:hover{background:var(--line2)}
-.tab-b{flex:1;min-width:0;display:flex;align-items:baseline;gap:7px;padding:6px 4px 6px 10px;
-  font-family:var(--display);font-size:13.5px;color:var(--ink2);white-space:nowrap}
-.tab-b span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.tab-b em{font-style:normal;font-family:var(--sans);font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums}
-.tab-b svg{align-self:center;color:var(--mut)}
-.tab.on .tab-b{color:var(--ink);font-weight:600}
-.tab-x{padding:6px 8px 6px 4px;color:var(--mut);opacity:0}
-.tab:hover .tab-x,.tab.on .tab-x,.tab-x:focus-visible{opacity:1}
-.tab-x:hover{color:var(--bad)}
-@media (hover:none){.tab-x{opacity:1}}
+/* ---- 词典抽屉 ---- */
+.drawer{position:fixed;top:0;right:0;bottom:0;z-index:80;width:min(var(--drawer),100vw);background:var(--paper);
+  border-left:1.5px solid var(--ink);padding:30px 28px 90px;overflow:auto;
+  transform:translateX(104%);visibility:hidden;transition:transform .22s ease}
+/* visibility 不加过渡：位移动画万一卡住，收起的抽屉也得藏得住 */
+.drawer.open{transform:none;visibility:visible}
+.drawer-x{position:absolute;top:14px;right:14px;z-index:1}
 
-.side-foot{margin-top:auto;padding-top:12px}
-.streak{display:flex;align-items:baseline;gap:8px;padding:14px 10px 2px;border-top:1px solid var(--line);margin-top:10px;
-  color:var(--mut);font-size:12px}
-.streak b{font-family:var(--display);font-size:22px;color:var(--ink);font-weight:700;font-feature-settings:"lnum"}
+/* ---- 统一输入框 ---- */
+.omni-in{display:flex;align-items:flex-start;gap:12px;padding:16px 20px;background:var(--card);
+  border:1.5px solid var(--ink);border-radius:14px;box-shadow:var(--shadow);color:var(--mut)}
+.omni-in:focus-within{color:var(--ink);box-shadow:4px 4px 0 var(--ink)}
+.omni-in svg{margin-top:5px}
+.omni-in textarea{flex:1;min-width:0;border:none;outline:none;background:none;resize:none;
+  font-family:var(--display);font-size:19px;line-height:1.5;color:var(--ink)}
+.omni-in textarea::placeholder{color:var(--mut)}
+.omni-routes{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.omni-r{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;padding:7px 14px;border-radius:99px;
+  border:1px solid var(--line);background:var(--card);color:var(--ink2)}
+.omni-r:hover:not(:disabled){border-color:var(--ink);color:var(--ink)}
+.omni-r.on{background:var(--ink);border-color:var(--ink);color:var(--paper);font-weight:600}
+.omni .hint{margin-top:10px}
+.omni-layer{position:fixed;inset:0;z-index:90;background:rgba(20,18,16,.5);display:grid;place-items:start center;padding:16vh 16px 0}
+.omni-box{width:min(700px,100%)}
+.omni-box>.hint{margin-top:12px;color:rgba(255,255,255,.72);text-align:center}
+.omni-box .omni-in{box-shadow:var(--float)}
 
-/* ---- 顶条：只放查词 ---- */
-.top{position:sticky;top:0;z-index:40;height:var(--top-h);display:flex;align-items:center;gap:12px;padding:0 var(--gutter);
-  background:color-mix(in srgb,var(--paper) 88%,transparent);backdrop-filter:blur(10px)}
-.top .search{width:340px;max-width:100%}
-.menubtn{display:none;padding:8px;margin-left:-8px;border-radius:var(--r-s);color:var(--ink2)}
-.menubtn:hover{background:var(--line2);color:var(--ink)}
-.mb-panel{display:none}
-
-/* ---- 舞台：左边内容，右边词典 ---- */
-.stage{display:grid;grid-template-columns:minmax(0,1fr) var(--dict-w);align-items:start;max-width:1220px}
-.stage-main{min-width:0}
-
-/* ---- 浮层 ---- */
-.scrim{display:none}
-.fab{display:none;position:fixed;right:18px;bottom:86px;z-index:58;width:46px;height:46px;border-radius:99px;
-  background:var(--ink);color:var(--paper);align-items:center;justify-content:center;box-shadow:var(--float)}
-.seltip{position:fixed;z-index:80;transform:translateX(-50%);display:inline-flex;align-items:center;gap:5px;
+/* ---- 浮在最上面的小东西 ---- */
+.seltip{position:fixed;z-index:85;transform:translateX(-50%);display:inline-flex;align-items:center;gap:5px;
   background:var(--ink);color:var(--paper);font-size:13px;font-weight:600;border-radius:99px;padding:7px 14px;box-shadow:var(--float)}
 .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);z-index:99;max-width:92vw;
   background:var(--ink);color:var(--paper);font-size:13.5px;border-radius:99px;padding:9px 20px;
   box-shadow:var(--float);animation:toast-in .2s ease}
 @keyframes toast-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
-
 /* 跟读条：深底，四套配色里都是「最上面那一层」 */
-.shadowbar{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:55;display:flex;align-items:center;gap:8px;
-  background:#17181C;color:#F7F6F2;border-radius:99px;padding:9px 12px 9px 18px;box-shadow:var(--float);
-  max-width:94vw;flex-wrap:wrap;justify-content:center;border:1px solid rgba(255,255,255,.12)}
+.shadowbar{position:fixed;left:calc(50% + var(--rail)/2);transform:translateX(-50%);bottom:22px;z-index:55;display:flex;align-items:center;gap:8px;
+  background:#1B1B1B;color:#FBFAF6;border-radius:99px;padding:9px 12px 9px 18px;box-shadow:var(--float);
+  max-width:94vw;flex-wrap:wrap;justify-content:center;border:1px solid rgba(255,255,255,.14)}
 .sh-idx{font-size:12.5px;opacity:.65;font-variant-numeric:tabular-nums}
 .sh-hint{font-size:13px}
 .sh-btn{display:inline-flex;align-items:center;gap:4px;color:inherit;background:rgba(255,255,255,.14);
   border-radius:99px;padding:7px 10px;font-size:13px}
 .sh-btn:hover{background:rgba(255,255,255,.25)}
-.sh-btn.on,.sh-btn.go{background:var(--hi);color:var(--on-hi)}
+.sh-btn.on,.sh-btn.go{background:#E4523F;color:#fff}
 .sh-btn.go{font-weight:700;padding:7px 14px}
 
-/* ---- 宽屏：可以把侧栏、词典手动收起 ----
-   **必须锁在宽屏**：窄屏下侧栏是抽屉，这几条要是生效，抽屉会被 display:none
-   干掉，顶条的菜单键就成了死键——点了没反应，还找不出原因。 */
-@media (min-width:1001px){
-  .side-fold{display:inline-flex}
-  /* 宽屏下这个键的含义是「把侧栏放回来」，和收起键用同一个图标配成一对；
-     窄屏保持三条杠，那里它的含义是「拉出抽屉」 */
-  .mb-menu{display:none}
-  .mb-panel{display:inline}
-  .app.navfold{grid-template-columns:minmax(0,1fr)}
-  .app.navfold .side{display:none}
-  .app.navfold .menubtn{display:inline-flex}
-}
-/* 881px 起才生效，正好和下面的手机断点错开，收起状态不会波及手机上的全屏词典 */
+/* 宽屏：抽屉开着时，舞台让出右边，正文重新居中，不被盖住 */
 @media (min-width:881px){
-  .stage.nodict{grid-template-columns:minmax(0,1fr)}
-  .stage.nodict .dict{display:none}
-  .fab.show{display:flex}
+  .stage.with-drawer{padding-right:var(--drawer)}
 }
 
-/* ---- 窄屏：侧栏变成抽屉 ----
-   1000px 以下先收侧栏（比词典的 880px 早一档），
-   免得中等宽度的窗口被侧栏 + 词典挤得正文只剩一条缝。 */
-@media (max-width:1000px){
-  :root{--gutter:22px}
-  .app{grid-template-columns:minmax(0,1fr)}
-  /* 收起状态必须同时用 visibility，不能只靠位移。
-     把窗口拖窄跨过这个断点时，位移动画可能在布局切换的当口跑不起来，值卡在
-     起点，侧栏原地不动压在正文上，看着就是「页面重叠」。
-     visibility 这里**不加过渡**，收起时立即生效，不依赖动画时钟。代价是收起时
-     没有滑出动画（展开的滑入还在），用一个动效换一个必现的错位，值得。 */
-  .side{position:fixed;left:0;top:0;width:264px;transform:translateX(-102%);visibility:hidden;
-    transition:transform .24s ease;box-shadow:var(--float)}
-  .side.open{transform:none;visibility:visible}
-  .scrim{display:block;position:fixed;inset:0;z-index:65;background:rgba(15,16,18,.42)}
-  .menubtn{display:inline-flex}
-}
-
-/* ---- 手机 ---- */
+/* ---- 手机：那列格子躺到底部 ---- */
 @media (max-width:880px){
-  :root{--gutter:16px}
-  /* 侧栏占满整屏：这个宽度下「抽屉 + 半透明遮罩 + 正文」是三层界面压在一起，
-     很乱。整屏之后没有遮罩可点，改用右上角的关闭键（点任意导航项也会自动收起）。 */
-  .side{width:100%;height:100dvh;border-right:none;box-shadow:none;overflow-y:auto}
-  .scrim{display:none}
-  .side-x{display:inline-flex}
-  .stage{display:block}
-  .top .search{width:auto;flex:1}
-  .fab{display:flex}
-  .shadowbar{bottom:14px}
+  :root{--gutter:18px;--rail:0px}
+  .rail{top:auto;right:0;width:auto;height:62px;flex-direction:row;justify-content:space-between;padding:0 6px;
+    border-right:none;border-top:1px solid var(--line)}
+  .rail>.seal,.rail-gap,.rail-streak{display:none}
+  .rail-main,.rail-foot{flex-direction:row;margin:0;gap:0}
+  .rail-b{width:42px;height:50px}
+  .rail-b .ge{--s:36px}
+  .stage{padding-bottom:72px}
+  .drawer{border-left:none;padding:26px var(--gutter) 110px;transform:translateY(104%)}
+  .toast{bottom:76px}
+  .shadowbar{bottom:72px;left:50%}
+  .omni-layer{padding-top:8vh}
+  .kai-h{font-size:30px}
 }

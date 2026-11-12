@@ -2,42 +2,26 @@
    里面按查到的东西换四种卡：英文词、中文词、整段翻译、整句解析。 */
 
 import { useState } from "react";
-import {
-  Check, ChevronLeft, Loader2, Plus, Puzzle, Search, Sparkles, Volume2, X,
-} from "lucide-react";
+import { Check, ChevronLeft, Loader2, Plus, Puzzle, Sparkles, Volume2, X } from "lucide-react";
 import { Boldify } from "../ui/Boldify.jsx";
 
-export function DictPanel({ app }) {
+export function DictPanel({ app, open, onClose }) {
   const {
-    dict, dictOpen, closeDict, search, setSearch, doSearch,
-    translateText, analyzeSentence, retryLookup, speak,
+    dict, translateText, analyzeSentence, retryLookup, speak,
     dictIsSaved, saveCurrent, fetchContext, ctxBusy,
     wchat, askWord, addChatWord, savedKeys, backToWord,
   } = app;
 
   return (
-    <aside className={dictOpen ? "dict open" : "dict"}>
-      <button className="dict-x iconbtn" onClick={closeDict} aria-label="收起词典">
+    <aside className={open ? "drawer open" : "drawer"} aria-hidden={!open}>
+      <button className="drawer-x iconbtn" onClick={onClose} aria-label="收起词典">
         <X size={16} />
       </button>
 
-      {/* 面板内也留一个查词框：手机上词典盖满全屏，够不着顶栏那个 */}
-      <label className="search dict-search">
-        <Search size={14} />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") doSearch(); }}
-          placeholder="查词 / 翻译句子"
-          aria-label="查词"
-        />
-      </label>
-
       {dict.status === "idle" && (
         <div className="dict-idle">
-          <span className="stamp">007</span>
-          <p>点击文中任意单词查词</p>
-          <p className="mut">顶部搜索框支持中英互查</p>
+          <span className="ge">词</span>
+          <p>点文中任意单词，释义就浮在它旁边</p>
         </div>
       )}
 
@@ -166,7 +150,7 @@ function EnCard({ d, meta, sent, onAnalyze, onSpeak, saved, onSave, onCtx, ctxBu
       {/* 你点的是 shaking，卡片却只写 shake，会以为查串了词。所以大标题保持你
           输进去的那个形态，原形降到下面一行。拼错是另一回事：那时大标题必须是
           正确拼写，输错的那个已经在上面的纠错条里交代过了。 */}
-      <div className="hw">{d.typo ? d.word : meta?.raw || d.word}</div>
+      <div className="hw"><span className="four">{d.typo ? d.word : meta?.raw || d.word}</span></div>
       {!d.typo && meta?.raw && d.word && meta.raw.toLowerCase() !== d.word.toLowerCase() && (
         <div className="lemma">
           原形 <b>{d.word}</b>

@@ -40,7 +40,7 @@ export function SetupView({ app }) {
 
   return (
     <div className="setup">
-      <div className="mark"><i>007</i>学英语</div>
+      <div className="brand"><span className="seal">007</span>学英语</div>
       <h1 className="h1">连接模型服务</h1>
       <p className="page-sub">
         先选一家模型服务商，填上它的 API Key 就能用。密钥只存在这台电脑的浏览器里，

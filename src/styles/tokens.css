@@ -1,30 +1,31 @@
 /* =========================================================
-   设计令牌：整套界面只从这里取色、取字、取圆角。
-   想换颜色改这一个文件就够了，别的样式文件里不写死色值。
+   设计令牌：整套界面只从这里取色、取字。想换配色只改这一个文件。
 
-   三样东西各司其职，不要混用：
-     墨色（--ink）  主按钮、选中态、进度条
-     钢笔蓝（--pen）只给链接和键盘焦点
-     荧光黄（--hi） 只用在「词」上——生词、织入词、正在查的词。
-                    它是这个产品的签名，别拿去装饰别的东西。
+   这一版的底子是「描红本」：
+     朱红（--red） 还在学的东西——没写的格子、没记牢的词、答错的题
+     墨黑（--ink） 已经会的东西——写过的格子、掌握的词，以及所有主按钮
+     淡红格线（--grid） 米字格和四线格
+   红变黑，就是学会了。别拿红色去做别的装饰，否则这句话就不成立了。
+
+   琥珀色（--hi-*）只留给「AI 现写」徽章和提醒条，绿色（--ok）只留给
+   「真实来源」——这两个是诚实性的约定，见 specs/constitution.md 第五条。
    ========================================================= */
 :root{
-  --paper:#F7F6F2; --card:#FFFFFF; --sunk:#F0EEE8;
-  --ink:#17181C; --ink2:#50545D; --mut:#8C9098;
-  --line:#E3E0D8; --line2:#EEEBE4;
-  --pen:#27458F; --pen-bg:#EAEEF8;
-  --hi:#FFD84D; --hi-soft:#FFEDA6; --hi-wash:#FFF7D6; --hi-text:#6A4D00;
-  /* 压在荧光黄上的字：四套配色里黄色都是亮的，所以永远用这个深棕，
-     写 var(--ink) 的话到了夜间配色会变成浅字压亮底，糊成一片 */
-  --on-hi:#2B1F00;
-  --ok:#1F7A54; --ok-bg:#E5F3EC; --bad:#B8392D; --bad-bg:#FBEAE7;
-  --shadow:0 1px 2px rgba(23,24,28,.04),0 8px 24px -12px rgba(23,24,28,.10);
-  --float:0 12px 34px rgba(23,24,28,.16);
+  --paper:#FBFAF6; --card:#FFFFFF; --sunk:#F3F1EA;
+  --ink:#1B1B1B; --ink2:#55534E; --mut:#8F8C84;
+  --line:#E5E1D6; --line2:#EFECE3;
+  --red:#C5392B; --red-soft:rgba(197,57,43,.42); --red-wash:#FBECE8; --on-red:#FFFFFF;
+  --grid:rgba(197,57,43,.34); --grid2:rgba(197,57,43,.16);
+  --hi:#E9B43A; --hi-soft:#F6DFA4; --hi-wash:#FDF4DC; --hi-text:#6A4D00;
+  --ok:#1F7A54; --ok-bg:#E5F3EC; --bad:var(--red); --bad-bg:var(--red-wash);
+  --pen:var(--ink); --pen-bg:var(--sunk);
+  --shadow:0 1px 2px rgba(27,27,27,.05),0 10px 28px -14px rgba(27,27,27,.14);
+  --float:0 14px 40px rgba(27,27,27,.18);
 
-  /* 字体全部用系统自带的，不内嵌字体文件：单文件产物不会变大，离线也不缺字。
-     标题：英文走 Iowan / Charter / Georgia，中文在 Mac 上是宋体，
-     Windows 没有好看的宋体，退回微软雅黑。 */
-  --display:'Iowan Old Style','Charter',Georgia,'Songti SC','Noto Serif CJK SC','Source Han Serif SC','PingFang SC','Microsoft YaHei',serif;
+  /* 字体全部用系统自带的，不内嵌字体文件。
+     楷体是字帖的字：Mac 上是「楷体-简」，Windows 上是「楷体」。 */
+  --kai:'Kaiti SC','STKaiti','KaiTi','楷体','Songti SC',serif;
+  --display:'Iowan Old Style','Charter',Georgia,'Songti SC','Noto Serif CJK SC','PingFang SC','Microsoft YaHei',serif;
   --read-serif:'Iowan Old Style','Charter',Georgia,'Times New Roman','Songti SC',STSong,serif;
   --sans:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;
   --mono:ui-monospace,Menlo,Consolas,monospace;
@@ -32,27 +33,30 @@
   --read-font:var(--read-serif); --read-size:19px;
 
   --r:8px; --r-s:6px;
-  --side-w:232px; --dict-w:348px; --top-h:56px; --gutter:40px;
+  --rail:76px; --drawer:420px; --gutter:40px;
 }
 
-/* ---- 另外三套配色：只覆盖要变的那几个 ----
+/* ---- 另外三套：旧纸、护眼绿、夜里 ----
    名字（cream / green / dark）存在用户的偏好里，不能改。 */
 [data-theme="cream"]{
-  --paper:#F3EBDA; --card:#FCF7EB; --sunk:#EBE2CE; --line:#E0D5BC; --line2:#EAE0CA;
-  --ink:#231F17; --ink2:#5C5546; --mut:#948B78; --pen-bg:#E6E3DA;
-  --hi-wash:#FBEFC4;
+  --paper:#F2E9D5; --card:#FAF4E4; --sunk:#E8DEC7; --line:#DCCFB3; --line2:#E6DBC3;
+  --ink:#241F17; --ink2:#5C5546; --mut:#948B78;
+  --red:#B8341F; --red-soft:rgba(184,52,31,.45); --red-wash:#F3DCD0;
+  --grid:rgba(184,52,31,.36); --grid2:rgba(184,52,31,.17); --hi-wash:#F6E7BD;
 }
 [data-theme="green"]{
-  --paper:#E4EDDE; --card:#F3F8EF; --sunk:#D8E4D1; --line:#CBDAC3; --line2:#D8E4D1;
-  --ink:#172019; --ink2:#4B584D; --mut:#7E8D7B; --pen-bg:#D9E3DE;
-  --hi-wash:#F6F1C4;
+  --paper:#DEE9D7; --card:#EEF5E9; --sunk:#D1DFC9; --line:#C1D2B8; --line2:#CFDDC7;
+  --ink:#17201A; --ink2:#4A574C; --mut:#7C8B79;
+  --red:#B03A2A; --red-soft:rgba(176,58,42,.46); --red-wash:#E9DACB;
+  --grid:rgba(176,58,42,.36); --grid2:rgba(176,58,42,.17); --hi-wash:#EFEBBF;
 }
 [data-theme="dark"]{
-  --paper:#131417; --card:#1B1D22; --sunk:#0F1012; --line:#2C2E35; --line2:#22242A;
-  --ink:#ECEAE4; --ink2:#B4B2AB; --mut:#7D7E83;
-  --pen:#A9BBF5; --pen-bg:#232A40;
-  --hi:#F2C230; --hi-soft:rgba(242,194,48,.34); --hi-wash:rgba(242,194,48,.14); --hi-text:#F2C230;
-  --ok:#5CC596; --ok-bg:#15302A; --bad:#EA8D80; --bad-bg:#35211E;
-  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px -12px rgba(0,0,0,.5);
-  --float:0 12px 34px rgba(0,0,0,.5);
+  --paper:#151413; --card:#1F1D1B; --sunk:#0F0E0D; --line:#33302C; --line2:#272522;
+  --ink:#EEEAE2; --ink2:#B7B2A8; --mut:#807B72;
+  --red:#F0705C; --red-soft:rgba(240,112,92,.48); --red-wash:rgba(240,112,92,.15); --on-red:#1A0906;
+  --grid:rgba(240,112,92,.36); --grid2:rgba(240,112,92,.16);
+  --hi:#E9B43A; --hi-soft:rgba(233,180,58,.34); --hi-wash:rgba(233,180,58,.14); --hi-text:#EDBE55;
+  --ok:#5CC596; --ok-bg:#15302A;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 28px -14px rgba(0,0,0,.55);
+  --float:0 14px 40px rgba(0,0,0,.55);
 }

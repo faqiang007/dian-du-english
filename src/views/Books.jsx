@@ -77,7 +77,7 @@ export function BooksView({ app }) {
       {readErr && <div className="callout bad">{readErr}</div>}
 
       {all.length === 0 && !booksBusy && !booksErr && (
-        <div className="empty"><span className="stamp">007</span><p>正在取教材清单…</p></div>
+        <div className="empty"><span className="ge">书</span><p>正在取教材清单…</p></div>
       )}
       {all.length > 0 && list.length === 0 && (
         <div className="empty"><p>这个难度下没有匹配「{q}」的篇目，换个词或换个难度</p></div>

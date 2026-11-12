@@ -7,7 +7,7 @@ import { LEVELS } from "../data/levels.js";
 import { SCENES } from "../data/scenes.js";
 
 export function TalkView({ app }) {
-  const { talk, setTalk, dueList, level, startTalk, sendTalk, exitTalk, speak } = app;
+  const { talk, setTalk, dueList, level, startTalk, sendTalk, exitTalk, speak, article, startShadow, setHomeMode, go } = app;
   const lv = LEVELS.find((l) => l.id === level);
 
   const endRef = useRef(null);
@@ -18,7 +18,7 @@ export function TalkView({ app }) {
   if (!talk.scene) {
     return (
       <div className="page">
-        <div className="page-h"><h1>情景对话</h1></div>
+        <div className="page-h"><h1>开口</h1></div>
         <p className="page-sub">
           挑个场景，AI 扮演对方跟你一来一回。你说得不地道时它不会打断，
           会在回复下面给一句更自然的说法。
@@ -34,6 +34,12 @@ export function TalkView({ app }) {
             </button>
           ))}
         </div>
+        {article && (
+          <button className="next-ge" onClick={() => { setHomeMode(false); go("read"); startShadow(); }}>
+            <span className="ge">读</span>
+            <span><b>不想对话？跟读《{article.title}》</b><small>一句一停，听完跟着念，可以放慢</small></span>
+          </button>
+        )}
         <p className="hint">按你当前的难度「{lv?.label || "基础"}」说话，不会超纲。练完随时能换场景。</p>
       </div>
     );

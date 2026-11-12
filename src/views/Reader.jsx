@@ -1,22 +1,39 @@
-/* 阅读页：一篇文章。正文直接铺在纸上，不套卡片；
-   工具排成标题下面的一行，读后小测接在文末。 */
+/* 读 · 正文。
+   点哪个词，释义小卡就浮在那个词下面，眼睛不用离开这一行；
+   你自己的生词在文中是红的（还在描），掌握了的是黑的（已经会写）。
+   工具收在底部一条悬浮的小坞里，读的时候不占地方。 */
 
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, ExternalLink, Globe,
-  Languages, Loader2, Mic, Play, Plus, RefreshCw, Square, X,
+  Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, Globe, Languages, Loader2,
+  Mic, Play, Plus, Puzzle, RefreshCw, Sparkles, Square, Volume2, X,
 } from "lucide-react";
 import { LEVELS } from "../data/levels.js";
 import { hostOf, splitSentences } from "../lib/text.js";
+import { isMastered } from "../lib/vocab.js";
 
-export function ReaderView({ app }) {
+export function ReaderView({ app, peek, onExpand }) {
   const {
-    article, genLoading, genError, topic, reTopicOf, generateArticle,
+    article, tabs, activeId, switchTab, closeTab, openBlankTab,
+    genLoading, genError, topic, reTopicOf, generateArticle,
     reading, toggleReadArticle, toggleTrans, transBusy, showTrans, startShadow, shadow,
-    startQuiz, quiz, pickOption, nextQuestion, saveMissedWords, savedKeys,
-    lvHint, setLvHint, clicks, setLevel, setStats, showToast, lvMenu, setLvMenu,
+    quiz, go, lvHint, setLvHint, clicks, clickedRef, setLevel, setStats, showToast, lvMenu, setLvMenu,
     curWords, curMins, chapters, chIdx, gotoCh, curText, curTrans,
-    dict, savedSurfaces, wovenSet, flatSents, readIdx, lookup, setSelTip,
+    dict, dictOpen, savedSurfaces, wovenSet, vocab, flatSents, readIdx, lookup, setSelTip,
   } = app;
+  const box = useRef(null);
+
+  /* 已经掌握的生词：文中不再标红。和 savedSurfaces 用同一套取词办法。 */
+  const inkSet = useMemo(() => {
+    const s = new Set();
+    vocab.forEach((v) => {
+      if (v.data?.type === "en" && isMastered(v)) {
+        if (v.data.word) s.add(v.data.word.toLowerCase());
+        if (v.surface) s.add(v.surface.toLowerCase());
+      }
+    });
+    return s;
+  }, [vocab]);
 
   /* 正在现写：文章还没来，只画骨架。此时 article 可能还是上一篇，也可能是空的，
      所以这一支里不碰 article 的任何字段。 */
@@ -29,14 +46,26 @@ export function ReaderView({ app }) {
   }
 
   const lvOf = (id) => LEVELS.find((l) => l.id === id);
-  const quizBusy = quiz.st === "loading" || quiz.st === "on";
+  const looked = [...clickedRef.current]; // 本章点过的词；clicks 变了会重画，所以这里读得到最新的
+  const last = chIdx >= chapters.length - 1;
 
   return (
-    <article className="art">
+    <article className="art" ref={box}>
+      {/* 桌上摊着的几篇，随手换 */}
+      <div className="art-tabs">
+        <button className="btn txt sm" onClick={openBlankTab}><ChevronLeft size={14} /> 书桌</button>
+        {tabs.map((t) => (
+          <span key={t.id} className={t.id === activeId ? "art-tab on" : "art-tab"}>
+            <button onClick={() => switchTab(t.id)} title={t.title}>{t.title || "未命名"}</button>
+            <button onClick={() => closeTab(t.id)} aria-label={`收起《${t.title}》`}><X size={11} /></button>
+          </span>
+        ))}
+      </div>
+
       {/* 点词密度给出的难度建议。只提示不自动改——难度改了下一篇才生效，
           替用户默默改掉会让人莫名其妙。 */}
       {lvHint && (
-        <div className={lvHint.dir === "down" ? "callout hi row" : "callout ok row"}>
+        <div className="callout hi row">
           <span>
             {lvHint.dir === "down"
               ? `这篇你点了 ${clicks} 个词，可能偏难了`
@@ -102,8 +131,7 @@ export function ReaderView({ app }) {
             <i>·</i>主题「{article.topic}」
             <i>·</i>
             <button className="link quiet"
-              onClick={() => generateArticle(reTopicOf(article), article.level, { newTab: true })}
-              disabled={genLoading}>
+              onClick={() => generateArticle(reTopicOf(article), article.level, { newTab: true })}>
               <Copy size={12} /> 对比一篇
             </button>
           </>
@@ -112,40 +140,16 @@ export function ReaderView({ app }) {
 
       <h1 className="title">{article.title}</h1>
 
-      <div className="tools">
-        <button className="btn pri" onClick={toggleReadArticle}>
-          {reading ? <Square size={14} /> : <Play size={14} />}
-          {reading ? "停止朗读" : "朗读全文"}
-        </button>
-        <button className="btn txt" onClick={toggleTrans} disabled={transBusy}>
-          {transBusy ? <Loader2 size={14} className="spin" /> : <Languages size={14} />}
-          {transBusy ? "翻译中…" : showTrans ? "隐藏中文" : "显示中文"}
-        </button>
-        <button className="btn txt" onClick={startShadow} disabled={shadow.on}>
-          <Mic size={14} /> 跟读练习
-        </button>
-        <button className="btn txt" onClick={startQuiz} disabled={quizBusy}>
-          {quiz.st === "loading"
-            ? <><Loader2 size={14} className="spin" /> 出题中…</>
-            : <><ClipboardCheck size={14} /> 做小测</>}
-        </button>
-        {!article.imported && (
-          <button className="btn txt" onClick={() => generateArticle(reTopicOf(article))}>
-            <RefreshCw size={14} /> 换一篇
-          </button>
-        )}
-      </div>
-
       {chapters.length > 1 && (
         <div className="chbar">
-          <button className="btn txt" onClick={() => gotoCh(chIdx - 1)} disabled={chIdx === 0}>
+          <button className="btn txt sm" onClick={() => gotoCh(chIdx - 1)} disabled={chIdx === 0}>
             <ChevronLeft size={14} /> 上一章
           </button>
           <div className="chprog">
             <span>第 {chIdx + 1} / {chapters.length} 章</span>
             <div className="prog"><i style={{ width: `${((chIdx + 1) / chapters.length) * 100}%` }} /></div>
           </div>
-          <button className="btn txt" onClick={() => gotoCh(chIdx + 1)} disabled={chIdx === chapters.length - 1}>
+          <button className="btn txt sm" onClick={() => gotoCh(chIdx + 1)} disabled={last}>
             下一章 <ChevronRight size={14} />
           </button>
         </div>
@@ -154,7 +158,7 @@ export function ReaderView({ app }) {
       {article.cn_intro && chIdx === 0 && <p className="intro">{article.cn_intro}</p>}
       {article.woven?.length > 0 && (
         <p className="woven">
-          本篇织入了你的生词：
+          这篇里织进了你正在描的词：
           {article.woven.map((w, i) => <span key={w}>{i > 0 && "、"}<b>{w}</b></span>)}
           ，留意重逢
         </p>
@@ -191,8 +195,9 @@ export function ReaderView({ app }) {
           content={curText}
           trans={curTrans}
           showTrans={showTrans}
-          activeKey={dict.key}
+          activeKey={dictOpen ? dict.key : null}
           savedSurfaces={savedSurfaces}
+          inkSet={inkSet}
           wovenSet={wovenSet}
           shadowId={
             shadow.on ? flatSents[shadow.idx]?.id
@@ -203,44 +208,186 @@ export function ReaderView({ app }) {
         />
       </div>
 
-      {/* 读后动作：还有下一章就往下读；小测随时能做，读到这里正是时候 */}
-      {(chIdx < chapters.length - 1 || quiz.st === "idle") && (
-        <div className="after">
-          {chIdx < chapters.length - 1 && (
+      {peek && <Peek app={app} box={box} onExpand={onExpand} />}
+
+      {/* 读到这儿：这一章查过哪些词，然后去哪一格 */}
+      <section className="recap">
+        {looked.length > 0 && (
+          <>
+            <div className="lbl">这一章你查过 {looked.length} 个词</div>
+            <div className="recap-ws">
+              {looked.map((w) => (
+                <button key={w} className={savedSurfaces.has(w) ? "wd on" : "wd"} onClick={() => lookup(w)}>{w}</button>
+              ))}
+            </div>
+          </>
+        )}
+        <div className="recap-go">
+          {!last && (
             <button className="btn pri lg" onClick={() => gotoCh(chIdx + 1)}>
               下一章 <ChevronRight size={15} />
             </button>
           )}
-          {quiz.st === "idle" && (
-            <button className="btn sec lg" onClick={startQuiz}>
-              <ClipboardCheck size={15} /> 读完了，做 3 道小测
-            </button>
-          )}
+          <button className="next-ge" onClick={() => go("quiz")}>
+            <span className="ge">测</span>
+            <span><b>{quiz.st === "on" ? "接着答题" : quiz.st === "done" ? "看小测结果" : "读完了，去测一测"}</b><small>3 道题，优先考你查过的词</small></span>
+          </button>
+          <button className="next-ge" onClick={() => go("talk")}>
+            <span className="ge">说</span>
+            <span><b>开口练一练</b><small>挑个场景，把刚学的词用出来</small></span>
+          </button>
         </div>
-      )}
-
-      {quiz.st === "err" && (
-        <div className="callout bad">出题失败了。<button className="link" onClick={startQuiz}>重试</button></div>
-      )}
-      {(quiz.st === "on" || quiz.st === "done") && (
-        <QuizBlock quiz={quiz} onPick={pickOption} onNext={nextQuestion}
-          onRetryArticle={() => generateArticle(reTopicOf(article))}
-          onSaveMissed={saveMissedWords} savedKeys={savedKeys} />
-      )}
+      </section>
 
       {genError && (
         <div className="callout bad">
           {genError} <button className="link" onClick={() => generateArticle(reTopicOf(article))}>重试</button>
         </div>
       )}
+
+      {/* 底部小坞：跟读时让位给跟读条 */}
+      {!shadow.on && (
+        <div className="dock" role="toolbar" aria-label="阅读工具">
+          <button className="dock-b main" onClick={toggleReadArticle}>
+            {reading ? <Square size={15} /> : <Play size={15} />}
+            {reading ? "停止" : "朗读"}
+          </button>
+          <button className={showTrans ? "dock-b on" : "dock-b"} onClick={toggleTrans} disabled={transBusy}>
+            {transBusy ? <Loader2 size={15} className="spin" /> : <Languages size={15} />}
+            {transBusy ? "翻译中" : "中文"}
+          </button>
+          <button className="dock-b" onClick={startShadow}><Mic size={15} /> 跟读</button>
+          {!article.imported && (
+            <button className="dock-b" onClick={() => generateArticle(reTopicOf(article))}>
+              <RefreshCw size={15} /> 换一篇
+            </button>
+          )}
+          <i />
+          <button className="dock-b ge-b" onClick={() => go("quiz")} title="读后小测"><span className="ge sm">测</span></button>
+        </div>
+      )}
     </article>
   );
 }
 
-/* ---------- 文章正文：分句 + 可点击单词 + 朗读/跟读高亮 ----------
-   每句的 id（sen-段号-句号）是朗读和跟读用来滚动定位的，别改格式。 */
+/* ---------- 浮在词旁边的小卡 ----------
+   只放「此刻读下去需要的」：这个词在这句里什么意思、怎么读、最常见的几个义项。
+   例句、追问、整句解析都在「展开」后的抽屉里。 */
 
-function ArticleBody({ content, trans, showTrans, onWord, activeKey, savedSurfaces, wovenSet, shadowId }) {
+function Peek({ app, box, onExpand }) {
+  const {
+    dict, closeDict, speak, dictIsSaved, saveCurrent, analyzeSentence, retryLookup, fetchContext, ctxBusy,
+  } = app;
+  const [pos, setPos] = useState(null);
+  const self = useRef(null);
+
+  // 找到被点的那个词，把卡片挂在它正下方
+  useLayoutEffect(() => {
+    const place = () => {
+      const host = box.current;
+      const el = host && host.querySelector(`[data-k="${dict.key}"]`);
+      if (!el) { setPos(null); return; }
+      const r = el.getBoundingClientRect();
+      const b = host.getBoundingClientRect();
+      const W = 348;
+      const left = Math.max(0, Math.min(r.left - b.left - 18, b.width - W));
+      setPos({ top: r.bottom - b.top + 10, left, tip: r.left - b.left + r.width / 2 - left });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [dict.key]);
+
+  // 卡片要是伸到屏幕外面去了，把它滚进来
+  useEffect(() => {
+    if (pos && self.current) self.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [pos && pos.top, dict.status]);
+
+  // 点别处、按 Esc 就收起。点另一个词不算「别处」——那是换一个词查
+  useEffect(() => {
+    const down = (e) => { if (!e.target.closest(".peek") && !e.target.closest(".w")) closeDict(); };
+    const key = (e) => { if (e.key === "Escape") closeDict(); };
+    document.addEventListener("mousedown", down);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", down); document.removeEventListener("keydown", key); };
+  }, []);
+
+  if (!pos) return null;
+  const d = dict.data;
+  const meta = dict.meta;
+
+  return (
+    <div className="peek" ref={self} style={{ top: pos.top, left: pos.left, "--tip": pos.tip + "px" }} role="dialog" aria-label="释义">
+      {dict.status === "loading" && (
+        <p className="peek-wait"><b>{dict.term}</b><Loader2 size={14} className="spin" /> 查询中…</p>
+      )}
+      {dict.status === "error" && (
+        <p className="peek-wait"><b>{dict.term}</b>{dict.msg || "查询失败了。"}
+          <button className="link" onClick={retryLookup}>重试</button></p>
+      )}
+      {/* 不是个词。刻意不给「重试」——重试只会让模型再编一次。 */}
+      {dict.status === "none" && (
+        <p className="peek-wait"><b>{dict.term}</b>词典里没有这个词，检查一下拼写。</p>
+      )}
+
+      {dict.status === "ok" && (
+        <>
+          {meta?.saved && <div className="meet">你正在描的词 · 第 {meta.meet} 次见面</div>}
+          {/* 同一个词查到第二次，基本可以断定是真不认识——此刻提醒一句不算打断 */}
+          {!meta?.saved && meta?.seen >= 2 && <div className="meet">这个词你查过 {meta.seen} 次了，收下吧</div>}
+          {d.typo && meta?.raw && d.typo.toLowerCase() !== meta.raw.toLowerCase() && (
+            <div className="typofix"><s>{meta.raw}</s> → <b>{d.typo}</b><span>拼写有误，已按正确的词查</span></div>
+          )}
+
+          <div className="peek-head">
+            <div className="hw"><span className="four">{d.typo ? d.word : meta?.raw || d.word}</span></div>
+            <button className="ph" onClick={() => speak(d.word, "en-US")} aria-label="美式发音">
+              {d.phonetic_us || "发音"} <Volume2 size={13} />
+            </button>
+          </div>
+          {!d.typo && meta?.raw && d.word && meta.raw.toLowerCase() !== d.word.toLowerCase() && (
+            <div className="lemma">原形 <b>{d.word}</b>{d.form && <span> · {d.form}</span>}</div>
+          )}
+
+          {d.context_cn && <div className="ctx"><small>在这句话里</small>{d.context_cn}</div>}
+          {/* 词条来自本地（生词本或缓存），没花 API，也就没有这句话的语境。想看才发请求。 */}
+          {!d.context_cn && dict.sent && meta?.local && (
+            <button className="chip" onClick={fetchContext} disabled={ctxBusy}>
+              {ctxBusy
+                ? <><Loader2 size={13} className="spin" /> 正在看这句…</>
+                : <><Sparkles size={13} /> 看它在这句里是什么意思</>}
+            </button>
+          )}
+
+          <ol className="senses tight">
+            {(d.senses || []).slice(0, 3).map((s, i) => <li key={i}><i>{s.pos}</i><span>{s.cn}</span></li>)}
+          </ol>
+
+          <div className="peek-f">
+            <button className={dictIsSaved ? "btn sec sm" : "btn pri sm"} onClick={saveCurrent}>
+              {dictIsSaved ? <Check size={13} /> : <Plus size={13} />}
+              {dictIsSaved ? "已在生词本" : "收进生词本"}
+            </button>
+            {dict.sent && (
+              <button className="btn txt sm" onClick={() => { onExpand(); analyzeSentence(dict.sent); }}>
+                <Puzzle size={13} /> 解析这句
+              </button>
+            )}
+            <button className="btn txt sm peek-more" onClick={onExpand}>
+              例句 · 追问 <ChevronRight size={13} />
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ---------- 文章正文：分句 + 可点击单词 + 朗读/跟读高亮 ----------
+   每句的 id（sen-段号-句号）是朗读和跟读用来滚动定位的，别改格式。
+   每个词的 data-k 是小卡用来找位置的。 */
+
+function ArticleBody({ content, trans, showTrans, onWord, activeKey, savedSurfaces, inkSet, wovenSet, shadowId }) {
   const paras = content.split(/\n+/).map((p) => p.trim()).filter(Boolean);
   const tokenRe = /([A-Za-z]+(?:['’-][A-Za-z]+)*)/;
   return (
@@ -263,11 +410,12 @@ function ArticleBody({ content, trans, showTrans, onWord, activeKey, savedSurfac
                     const cls =
                       "w" +
                       (activeKey === key ? " act" : "") +
-                      (savedSurfaces.has(low) ? " sav" : "") +
+                      (savedSurfaces.has(low) ? (inkSet.has(low) ? " ink" : " sav") : "") +
                       (isWov ? " wov" : "");
                     return (
                       <span
                         key={ti}
+                        data-k={key}
                         className={cls}
                         role="button"
                         tabIndex={0}
@@ -284,86 +432,6 @@ function ArticleBody({ content, trans, showTrans, onWord, activeKey, savedSurfac
         </div>
       ))}
     </div>
-  );
-}
-
-/* ---------- 读后小测 ---------- */
-
-function QuizBlock({ quiz, onPick, onNext, onRetryArticle, onSaveMissed, savedKeys }) {
-  if (quiz.st === "done") {
-    const total = quiz.qs.length;
-    return (
-      <section className="quiz done">
-        <div className="lbl">读后小测</div>
-        <div className="quiz-score"><b>{quiz.score}</b> / {total}<span>答对</span></div>
-        {quiz.adj?.dir === "up" && (
-          <p className="quiz-adj up">全对！难度已升到「{quiz.adj.label} · {quiz.adj.tag}」，下一篇生效</p>
-        )}
-        {quiz.adj?.dir === "down" && (
-          <p className="quiz-adj down">我们放缓一点，难度已调到「{quiz.adj.label} · {quiz.adj.tag}」，稳扎稳打</p>
-        )}
-        {!quiz.adj && <p className="quiz-adj">这个难度刚刚好，保持！</p>}
-
-        {/* 答错的词单独列出来。这是全应用最硬的一条证据——不是「你点过它」，
-            是「你确实答错了」，不收进生词本等于白测一场。 */}
-        {(quiz.missed || []).length > 0 && (
-          <div className="missed">
-            <div className="missed-t">这几个词答错了，收进生词本？</div>
-            <div className="missed-ws">
-              {quiz.missed.map((m) => (
-                <span key={m.w}>
-                  <b>{m.w}</b>{m.cn ? ` · ${m.cn}` : ""}
-                  {savedKeys?.has(m.w.toLowerCase()) && <em>已在本子里</em>}
-                </span>
-              ))}
-            </div>
-            <button className="btn pri" onClick={() => onSaveMissed(quiz.missed)}>
-              <Plus size={14} /> 全部收进生词本
-            </button>
-          </div>
-        )}
-
-        <button className="btn sec" onClick={onRetryArticle}>
-          <RefreshCw size={14} /> 按新难度再来一篇
-        </button>
-      </section>
-    );
-  }
-
-  const q = quiz.qs[quiz.i];
-  return (
-    <section className="quiz">
-      <div className="lbl">读后小测 · {quiz.i + 1} / {quiz.qs.length}</div>
-      <p className="quiz-q">{q.q}</p>
-      <div className="qopts">
-        {q.options.map((op, oi) => {
-          let cls = "qopt";
-          if (quiz.sel !== null) {
-            if (oi === q.answer) cls += " right";
-            else if (oi === quiz.sel) cls += " wrong";
-            else cls += " dim";
-          }
-          return (
-            <button key={oi} className={cls} onClick={() => onPick(oi)}>
-              <span className="qletter">{"ABCD"[oi]}</span> {op}
-            </button>
-          );
-        })}
-      </div>
-      {quiz.sel !== null && (
-        <div className="qexp">
-          <p>
-            <b className={quiz.sel === q.answer ? "ok-t" : "bad-t"}>
-              {quiz.sel === q.answer ? "答对了。" : "正确答案是 " + "ABCD"[q.answer] + "。"}
-            </b>
-            {q.explain}
-          </p>
-          <button className="btn pri" onClick={onNext}>
-            {quiz.i + 1 < quiz.qs.length ? "下一题" : "查看结果"} <ChevronRight size={14} />
-          </button>
-        </div>
-      )}
-    </section>
   );
 }
 
