@@ -1,0 +1,94 @@
+/* =========================================================
+   阅读页：正文直接铺在纸上
+   ========================================================= */
+.art{padding:22px 56px 150px var(--gutter);min-width:0}
+.art>.callout:first-child{margin-top:0;margin-bottom:18px;max-width:62ch}
+
+/* 标题上面那行小字：来历、难度、长度 */
+.kicker{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--mut)}
+.kicker i{font-style:normal;opacity:.55}
+.kicker .link{font-size:12.5px}
+.title{font-family:var(--display);font-size:clamp(28px,3.4vw,42px);line-height:1.16;font-weight:700;letter-spacing:-.01em;
+  margin-top:14px;max-width:20em;overflow-wrap:anywhere}
+
+.tools{display:flex;align-items:center;gap:2px;flex-wrap:wrap;margin-top:22px;padding:8px 0;
+  border-top:1px solid var(--ink);border-bottom:1px solid var(--line)}
+.tools .btn.pri{margin-right:8px;padding:7px 14px}
+
+/* 章节导航 */
+.chbar{display:flex;align-items:center;gap:14px;padding:8px 0;border-bottom:1px solid var(--line)}
+.chprog{flex:1;min-width:0;text-align:center}
+.chprog span{display:block;font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums;margin-bottom:6px}
+
+.intro{margin-top:22px;font-size:14px;color:var(--ink2);line-height:1.75;max-width:62ch}
+.woven{margin-top:10px;font-size:13px;color:var(--ink2);max-width:62ch}
+.woven b{font-family:var(--read-serif);font-weight:400;font-size:15px;color:var(--ink);
+  background:linear-gradient(transparent 52%,var(--hi-soft) 52%);padding:0 2px}
+
+/* ---- 正文 ---- */
+.prose{margin-top:28px;max-width:62ch}
+.para{margin-bottom:1.15em}
+.prose p{font-family:var(--read-font);font-size:var(--read-size);line-height:1.85;font-feature-settings:"liga"}
+.prose p.cn{font-family:var(--sans);font-size:14px;line-height:1.75;color:var(--ink2);
+  border-left:2px solid var(--line);padding-left:14px;margin-top:8px}
+/* 正在朗读 / 跟读的那一句 */
+.sen{border-radius:2px;transition:background .2s}
+.sen.on{background:var(--hi-wash);box-decoration-break:clone;-webkit-box-decoration-break:clone}
+/* 词的四种状态，全是荧光笔的不同下笔方式：
+   悬停=淡淡一抹  生词本里的=下半截划线  织入的=整词淡底+底线  正在查的=整词涂满 */
+.w{cursor:pointer;border-radius:2px;transition:background .12s}
+.w:hover{background:var(--hi-soft)}
+.w.sav{background:linear-gradient(transparent 62%,var(--hi-soft) 62%)}
+.w.wov{background:var(--hi-wash);box-shadow:inset 0 -2px 0 var(--hi)}
+.w.act{background:var(--hi);color:var(--on-hi)}
+
+.after{display:flex;gap:10px;flex-wrap:wrap;margin-top:34px;padding-top:22px;border-top:1px solid var(--line);max-width:62ch}
+.art>.callout{max-width:62ch}
+
+/* ---- 读后小测 ---- */
+.quiz{margin-top:34px;padding-top:20px;border-top:1px solid var(--ink);max-width:62ch}
+.quiz-q{margin-top:10px;font-family:var(--display);font-size:20px;line-height:1.5;font-weight:600}
+.qopts{display:flex;flex-direction:column;gap:8px;margin-top:16px}
+.qopt{display:flex;align-items:flex-start;gap:11px;font-size:14.5px;line-height:1.55;
+  border:1px solid var(--line);border-radius:var(--r);padding:11px 14px;background:var(--card)}
+.qopt:hover{border-color:var(--ink2)}
+.qletter{flex:none;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);
+  display:inline-flex;align-items:center;justify-content:center;font-family:var(--display);font-size:12px;font-weight:700}
+.qopt.right{border-color:var(--ok);background:var(--ok-bg)}
+.qopt.right .qletter{background:var(--ok);border-color:var(--ok);color:var(--card)}
+.qopt.wrong{border-color:var(--bad);background:var(--bad-bg)}
+.qopt.wrong .qletter{background:var(--bad);border-color:var(--bad);color:var(--card)}
+.qopt.dim{opacity:.5}
+.qexp{margin-top:16px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  font-size:14px;line-height:1.7}
+.qexp p{flex:1;min-width:240px}
+.qexp b{margin-right:4px}
+.quiz.done{text-align:left}
+.quiz-score{margin-top:10px;font-family:var(--display);font-size:28px;color:var(--mut);font-feature-settings:"lnum"}
+.quiz-score b{font-size:64px;line-height:1;color:var(--ink);font-weight:700}
+.quiz-score span{font-family:var(--sans);font-size:13px;margin-left:10px}
+.quiz-adj{margin:10px 0 18px;font-size:14px;color:var(--ink2)}
+.quiz-adj.up{color:var(--ok)}
+.quiz-adj.down{color:var(--bad)}
+.missed{margin:0 0 18px;padding:14px 16px;border-left:2px solid var(--bad);background:var(--bad-bg);border-radius:0 var(--r-s) var(--r-s) 0}
+.missed-t{font-size:13px;font-weight:600;color:var(--bad);margin-bottom:10px}
+.missed-ws{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px}
+.missed-ws span{font-size:12.5px;color:var(--ink2);background:var(--card);border:1px solid var(--line);border-radius:var(--r-s);padding:3px 9px}
+.missed-ws b{font-family:var(--read-serif);font-size:14px;color:var(--ink);font-weight:600}
+.missed-ws em{font-style:normal;font-size:11px;color:var(--ok);margin-left:6px}
+
+/* ---- 骨架屏 ---- */
+.skel{padding-top:8px;max-width:62ch}
+.skel-note{display:flex;align-items:center;gap:8px;color:var(--ink2);font-size:14px;margin-bottom:24px}
+.sk{height:15px;border-radius:4px;margin-bottom:14px;
+  background:linear-gradient(90deg,var(--line2) 25%,var(--line) 45%,var(--line2) 65%);background-size:200% 100%;animation:shimmer 1.4s infinite}
+.sk-t{height:34px;width:62%;margin-bottom:28px}
+.sk.w80{width:80%}.sk.w60{width:60%}
+.sk-gap{height:14px}
+@keyframes shimmer{to{background-position:-200% 0}}
+
+@media (max-width:880px){
+  .art{padding:14px var(--gutter) 150px}
+  .prose p{font-size:calc(var(--read-size) - 1.5px)}
+  .tools .btn.txt{padding:7px 7px}
+}

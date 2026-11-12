@@ -1,0 +1,58 @@
+/* =========================================================
+   设计令牌：整套界面只从这里取色、取字、取圆角。
+   想换颜色改这一个文件就够了，别的样式文件里不写死色值。
+
+   三样东西各司其职，不要混用：
+     墨色（--ink）  主按钮、选中态、进度条
+     钢笔蓝（--pen）只给链接和键盘焦点
+     荧光黄（--hi） 只用在「词」上——生词、织入词、正在查的词。
+                    它是这个产品的签名，别拿去装饰别的东西。
+   ========================================================= */
+:root{
+  --paper:#F7F6F2; --card:#FFFFFF; --sunk:#F0EEE8;
+  --ink:#17181C; --ink2:#50545D; --mut:#8C9098;
+  --line:#E3E0D8; --line2:#EEEBE4;
+  --pen:#27458F; --pen-bg:#EAEEF8;
+  --hi:#FFD84D; --hi-soft:#FFEDA6; --hi-wash:#FFF7D6; --hi-text:#6A4D00;
+  /* 压在荧光黄上的字：四套配色里黄色都是亮的，所以永远用这个深棕，
+     写 var(--ink) 的话到了夜间配色会变成浅字压亮底，糊成一片 */
+  --on-hi:#2B1F00;
+  --ok:#1F7A54; --ok-bg:#E5F3EC; --bad:#B8392D; --bad-bg:#FBEAE7;
+  --shadow:0 1px 2px rgba(23,24,28,.04),0 8px 24px -12px rgba(23,24,28,.10);
+  --float:0 12px 34px rgba(23,24,28,.16);
+
+  /* 字体全部用系统自带的，不内嵌字体文件：单文件产物不会变大，离线也不缺字。
+     标题：英文走 Iowan / Charter / Georgia，中文在 Mac 上是宋体，
+     Windows 没有好看的宋体，退回微软雅黑。 */
+  --display:'Iowan Old Style','Charter',Georgia,'Songti SC','Noto Serif CJK SC','Source Han Serif SC','PingFang SC','Microsoft YaHei',serif;
+  --read-serif:'Iowan Old Style','Charter',Georgia,'Times New Roman','Songti SC',STSong,serif;
+  --sans:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;
+  --mono:ui-monospace,Menlo,Consolas,monospace;
+  /* 正文字体和字号由设置页决定，store.js 会把这两个值写到最外层元素上 */
+  --read-font:var(--read-serif); --read-size:19px;
+
+  --r:8px; --r-s:6px;
+  --side-w:232px; --dict-w:348px; --top-h:56px; --gutter:40px;
+}
+
+/* ---- 另外三套配色：只覆盖要变的那几个 ----
+   名字（cream / green / dark）存在用户的偏好里，不能改。 */
+[data-theme="cream"]{
+  --paper:#F3EBDA; --card:#FCF7EB; --sunk:#EBE2CE; --line:#E0D5BC; --line2:#EAE0CA;
+  --ink:#231F17; --ink2:#5C5546; --mut:#948B78; --pen-bg:#E6E3DA;
+  --hi-wash:#FBEFC4;
+}
+[data-theme="green"]{
+  --paper:#E4EDDE; --card:#F3F8EF; --sunk:#D8E4D1; --line:#CBDAC3; --line2:#D8E4D1;
+  --ink:#172019; --ink2:#4B584D; --mut:#7E8D7B; --pen-bg:#D9E3DE;
+  --hi-wash:#F6F1C4;
+}
+[data-theme="dark"]{
+  --paper:#131417; --card:#1B1D22; --sunk:#0F1012; --line:#2C2E35; --line2:#22242A;
+  --ink:#ECEAE4; --ink2:#B4B2AB; --mut:#7D7E83;
+  --pen:#A9BBF5; --pen-bg:#232A40;
+  --hi:#F2C230; --hi-soft:rgba(242,194,48,.34); --hi-wash:rgba(242,194,48,.14); --hi-text:#F2C230;
+  --ok:#5CC596; --ok-bg:#15302A; --bad:#EA8D80; --bad-bg:#35211E;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px -12px rgba(0,0,0,.5);
+  --float:0 12px 34px rgba(0,0,0,.5);
+}

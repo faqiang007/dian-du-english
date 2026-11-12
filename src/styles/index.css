@@ -1,0 +1,8 @@
+/* 样式入口。顺序有讲究：先令牌，再地基和通用零件，最后各页自己的。 */
+@import "./tokens.css";
+@import "./base.css";
+@import "./shell.css";
+@import "./home.css";
+@import "./reader.css";
+@import "./dict.css";
+@import "./pages.css";

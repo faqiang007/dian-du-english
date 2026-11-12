@@ -3,21 +3,33 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>007学英语 · 切换服务商 / 模型</title>
 <style>
-body{font-family:-apple-system,'PingFang SC',sans-serif;max-width:680px;margin:50px auto;padding:0 20px;line-height:1.7;color:#1C2B45;background:#FCFBF7}
-h1{font-size:19px}
-.cur{background:#F7F5EE;padding:14px;border-radius:8px;font-size:14px;margin:18px 0}
-code{background:#EDF2FA;padding:2px 6px;border-radius:4px;font-size:13px}
-.row{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #E7E5DC;border-radius:8px;margin-bottom:10px;background:#fff}
-.row b{font-size:14px} .row .d{font-size:12.5px;color:#8B94A6;margin-top:2px}
-.row button{margin-left:auto;background:#2F5AA8;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;white-space:nowrap}
-.row.on{border-color:#2E7D5B;background:#E8F4EE}
-.row.on button{background:#8B94A6;cursor:default}
-.row.no button{background:#C9CFDA;cursor:not-allowed}
-.ok{color:#2E7D5B;font-weight:700} .mut{color:#8B94A6}
-.tip{font-size:13px;color:#8B94A6;margin-top:22px;border-top:1px solid #E7E5DC;padding-top:14px}
-.mbox{margin:18px 0;padding:14px;border:1px solid #E7E5DC;border-radius:8px;background:#fff}
-input{padding:8px;border:1px solid #E7E5DC;border-radius:6px;font-size:14px;width:280px;font-family:ui-monospace,Menlo,monospace}
-.mbox button{background:#2F5AA8;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;margin-left:8px}
+/* 配色与主应用保持一致（纸、墨、钢笔蓝）。这页特意不依赖主应用的任何文件：
+   万一应用打不开，它还得能单独用。 */
+:root{--paper:#F7F6F2;--card:#FFFFFF;--sunk:#F0EEE8;--ink:#17181C;--ink2:#50545D;--mut:#8C9098;--line:#E3E0D8;
+  --pen:#27458F;--ok:#1F7A54;--ok-bg:#E5F3EC;--bad:#B8392D;
+  --display:'Iowan Old Style','Charter',Georgia,'Songti SC','PingFang SC','Microsoft YaHei',serif}
+body{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;margin:48px auto;padding:0 22px;line-height:1.7;
+  color:var(--ink);background:var(--paper);-webkit-font-smoothing:antialiased}
+h1{font-family:var(--display);font-size:28px;font-weight:900;line-height:1.25;padding-bottom:14px;border-bottom:1px solid var(--ink)}
+code{background:var(--sunk);padding:2px 6px;border-radius:4px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace}
+button{background:var(--ink);color:var(--paper);border:none;padding:9px 18px;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit}
+button:hover{opacity:.86}
+input,select{padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--card);color:var(--ink);font-family:inherit}
+input:focus,select:focus{outline:none;border-color:var(--ink2)}
+.ok{color:var(--ok);font-weight:700} .bad{color:var(--bad);font-weight:700} .mut{color:var(--mut)}
+
+body{max-width:680px}
+.cur{background:var(--sunk);padding:14px 16px;border-left:2px solid var(--ink);font-size:14px;margin:20px 0}
+.row{display:flex;align-items:center;gap:12px;padding:14px 4px;border-bottom:1px solid var(--line)}
+.row b{font-size:15px} .row .d{font-size:12.5px;color:var(--mut);margin-top:2px}
+.row button{margin-left:auto;white-space:nowrap}
+.row.on{background:var(--ok-bg);padding-left:14px;padding-right:14px;border-bottom-color:transparent;border-radius:8px}
+.row.on button{background:transparent;color:var(--ok);cursor:default}
+.row.no button{background:var(--sunk);color:var(--mut);cursor:not-allowed}
+.tip{font-size:13px;color:var(--mut);margin-top:26px;border-top:1px solid var(--line);padding-top:14px}
+.mbox{margin:26px 0;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.mbox button{margin-left:8px}
+input{width:280px;font-family:ui-monospace,Menlo,Consolas,monospace}
 </style></head><body>
 <h1>切换 007学英语 使用的服务商 / 模型</h1>
 <div class="cur" id="cur">读取中…</div>

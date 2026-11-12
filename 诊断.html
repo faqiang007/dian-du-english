@@ -3,14 +3,25 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>007学英语 · 诊断</title>
 <style>
-body{font-family:-apple-system,'PingFang SC',sans-serif;max-width:820px;margin:40px auto;padding:0 20px;line-height:1.7;color:#1C2B45;background:#FCFBF7}
-h1{font-size:20px} h2{font-size:15px;margin-top:26px;border-bottom:1px solid #E7E5DC;padding-bottom:6px}
-pre{background:#F7F5EE;padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
-.ok{color:#2E7D5B;font-weight:700} .bad{color:#B5432F;font-weight:700} .mut{color:#8B94A6}
-button{background:#2F5AA8;color:#fff;border:none;padding:10px 20px;border-radius:6px;font-size:14px;cursor:pointer}
-input,select{padding:8px;border:1px solid #E7E5DC;border-radius:6px;font-size:14px}
+/* 配色与主应用保持一致（纸、墨、钢笔蓝）。这页特意不依赖主应用的任何文件：
+   万一应用打不开，它还得能单独用。 */
+:root{--paper:#F7F6F2;--card:#FFFFFF;--sunk:#F0EEE8;--ink:#17181C;--ink2:#50545D;--mut:#8C9098;--line:#E3E0D8;
+  --pen:#27458F;--ok:#1F7A54;--ok-bg:#E5F3EC;--bad:#B8392D;
+  --display:'Iowan Old Style','Charter',Georgia,'Songti SC','PingFang SC','Microsoft YaHei',serif}
+body{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;margin:48px auto;padding:0 22px;line-height:1.7;
+  color:var(--ink);background:var(--paper);-webkit-font-smoothing:antialiased}
+h1{font-family:var(--display);font-size:28px;font-weight:900;line-height:1.25;padding-bottom:14px;border-bottom:1px solid var(--ink)}
+code{background:var(--sunk);padding:2px 6px;border-radius:4px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace}
+button{background:var(--ink);color:var(--paper);border:none;padding:9px 18px;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit}
+button:hover{opacity:.86}
+input,select{padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--card);color:var(--ink);font-family:inherit}
+input:focus,select:focus{outline:none;border-color:var(--ink2)}
+.ok{color:var(--ok);font-weight:700} .bad{color:var(--bad);font-weight:700} .mut{color:var(--mut)}
+
+body{max-width:820px}
+h2{font-family:var(--display);font-size:18px;font-weight:900;margin-top:34px;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:12px}
+pre{background:var(--sunk);padding:14px;border-radius:8px;overflow-x:auto;font-size:12px;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,Menlo,Consolas,monospace}
 input{width:300px}
-code{background:#EDF2FA;padding:2px 6px;border-radius:4px;font-size:13px}
 </style></head><body>
 <h1>007学英语 · 连接诊断</h1>
 <p class="mut">这个页面读取应用已保存的设置，实际调用一次所选服务商，把原始返回完整显示出来。<br>
