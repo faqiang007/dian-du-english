@@ -60,30 +60,51 @@ BOOKS = [
     (345,  "Dracula",                   "Bram Stoker",            "小说",     "chapter", ("C1", "C2")),
 ]
 
-# Simple English Wikipedia 词条，CC BY-SA 4.0，可自由转载（数据里带署名和许可）
+# Simple English Wikipedia 词条，CC BY-SA 4.0，可自由转载（数据里带署名和许可）。
+# 按主题分组，组名写进 kind，教材库里显示成每篇的标签、也能按它筛。
+# 同一主题攒十几篇，是为了能连着读：同一批词在相近的文章里反复出现，最容易记住。
+# 2026-11-14 补了一批现代主题（科技、健康、环境、科学、太空、社会）。
+# 标题照简单英语维基的写法；写错或没有这个词条不要紧，取不到会跳过并打印出来。
 WIKI = [
-    "Cat", "Dog", "Elephant", "Panda", "Dolphin", "Bee", "Penguin",
-    "Rice", "Bread", "Tea", "Coffee", "Chocolate", "Pizza",
-    "Weather", "Rain", "Snow", "Volcano", "Earthquake", "Rainbow",
-    "Sun", "Moon", "Planet", "Star", "Gravity", "Electricity", "Magnet",
-    "Bicycle", "Train", "Airplane", "Ship", "Car",
-    "Football", "Basketball", "Swimming", "Olympic Games", "Chess",
-    "Music", "Piano", "Guitar", "Painting", "Photography", "Film",
-    "Internet", "Computer", "Robot", "Telephone", "Money", "Bank",
-    "School", "Library", "Hospital", "Doctor", "Teacher",
-    "Sleep", "Dream", "Heart", "Brain", "Bone", "Vitamin", "Exercise",
-    "Great Wall of China", "Beijing", "Shanghai", "Chinese language",
-    "Tea ceremony", "Silk Road", "Giant panda", "Dragon",
-    "Horse", "Rabbit", "Tiger", "Whale", "Butterfly", "Ant", "Owl", "Shark",
-    "Apple", "Banana", "Egg", "Milk", "Sugar", "Salt", "Noodle", "Soup",
-    "Wind", "Cloud", "Thunder", "Desert", "Forest", "Ocean", "River", "Mountain",
-    "Fire", "Water", "Air", "Metal", "Glass", "Paper", "Plastic",
-    "Clock", "Camera", "Battery", "Light bulb", "Radio", "Television",
-    "Running", "Cycling", "Yoga", "Dance", "Table tennis", "Badminton",
-    "Bread", "Cheese", "Honey", "Garden", "Farm", "Village", "City",
-    "Family", "Friend", "Birthday", "Holiday", "Festival", "Market",
-    "Language", "Alphabet", "Number", "Color", "Shape", "Time",
-    "Mars", "Earth", "Rainforest", "Antarctica", "Dinosaur", "Fossil",
+    ("科技", ["Internet", "Computer", "Robot", "Telephone", "Radio", "Television", "Camera",
+              "Clock", "Battery", "Light bulb",
+              "Artificial intelligence", "Machine learning", "Smartphone", "Mobile phone",
+              "Video game", "Email", "Social media", "Search engine", "Website", "Software",
+              "Computer virus", "Password", "Satellite", "Electric car", "3D printing"]),
+    ("交通", ["Bicycle", "Train", "Airplane", "Ship", "Car"]),
+    ("科学", ["Electricity", "Magnet", "Gravity", "Metal", "Glass", "Paper", "Plastic",
+              "Fire", "Water", "Air", "Number", "Color", "Shape", "Time",
+              "Atom", "Cell (biology)", "DNA", "Gene", "Evolution", "Photosynthesis",
+              "Light", "Sound", "Energy", "Temperature", "Oxygen", "Carbon dioxide",
+              "Microscope", "Chemistry", "Physics"]),
+    ("太空", ["Sun", "Moon", "Planet", "Star", "Mars", "Earth",
+              "Solar System", "Black hole", "Galaxy", "Milky Way", "Comet", "Asteroid",
+              "Telescope", "Astronaut", "International Space Station", "Apollo 11",
+              "Jupiter", "Saturn"]),
+    ("健康", ["Sleep", "Dream", "Heart", "Brain", "Bone", "Vitamin", "Exercise",
+              "Vaccine", "Virus", "Bacteria", "Blood", "Immune system", "Diabetes", "Cancer",
+              "Tooth", "Skin", "Lung", "Nutrition", "Smoking", "Allergy", "Obesity",
+              "Mental health"]),
+    ("环境", ["Climate change", "Global warming", "Greenhouse effect", "Pollution",
+              "Air pollution", "Recycling", "Renewable energy", "Solar power", "Wind power",
+              "Fossil fuel", "Deforestation", "Endangered species", "Extinction"]),
+    ("自然", ["Weather", "Rain", "Snow", "Volcano", "Earthquake", "Rainbow", "Wind", "Cloud",
+              "Thunder", "Desert", "Forest", "Ocean", "River", "Mountain", "Rainforest",
+              "Antarctica", "Fossil", "Dinosaur"]),
+    ("动物", ["Cat", "Dog", "Elephant", "Panda", "Giant panda", "Dolphin", "Bee", "Penguin",
+              "Horse", "Rabbit", "Tiger", "Whale", "Butterfly", "Ant", "Owl", "Shark"]),
+    ("食物", ["Rice", "Bread", "Tea", "Coffee", "Chocolate", "Pizza", "Apple", "Banana", "Egg",
+              "Milk", "Sugar", "Salt", "Noodle", "Soup", "Cheese", "Honey"]),
+    ("运动", ["Football", "Basketball", "Swimming", "Olympic Games", "Chess", "Running",
+              "Cycling", "Yoga", "Table tennis", "Badminton"]),
+    ("文化", ["Music", "Piano", "Guitar", "Painting", "Photography", "Film", "Dance",
+              "Language", "Alphabet", "Museum", "Newspaper", "Book", "Theatre"]),
+    ("中国", ["Great Wall of China", "Beijing", "Shanghai", "Chinese language", "Tea ceremony",
+              "Silk Road", "Dragon"]),
+    ("社会", ["Money", "Bank", "School", "Library", "Hospital", "Doctor", "Teacher", "Garden",
+              "Farm", "Village", "City", "Family", "Friend", "Birthday", "Holiday", "Festival",
+              "Market", "Economy", "Tax", "Inflation", "Trade", "Company", "Employment",
+              "Advertising", "Credit card", "Tourism", "Population", "United Nations"]),
 ]
 
 
@@ -119,10 +140,12 @@ def fetch(url, name, want_json=False):
         if r.returncode == 0 and t.strip():
             if not want_json:
                 open(p, "w", encoding="utf-8").write(t)
+                time.sleep(0.4)   # 真联网取的才停一下，别连珠炮似的打对方服务器
                 return t
             try:
                 json.loads(t)
                 open(p, "w", encoding="utf-8").write(t)
+                time.sleep(0.4)
                 return t
             except Exception as e:
                 last = "非 JSON（多半被限流）：" + t.strip()[:80]
@@ -424,8 +447,30 @@ def build_gutenberg(items):
         log("    得 %d 篇" % got)
 
 
+def clean_wiki(paras):
+    """维基纯文本接口吐出来的东西里，有三样不是能读的正文，在这里清掉。"""
+    out = []
+    for p in paras:
+        # 公式：数学式被拆成一行一个字符，后面跟一串 {\displaystyle …}。句子在这儿
+        # 已经被拦腰截断，往后拼不回来，正文就到这里为止；截断前那半句也不要。
+        if "\\displaystyle" in p or len(p) <= 2:
+            if out and not re.search(r'[.!?"”)]$', out[-1]):
+                out.pop()
+            break
+        # 脚注号 [1] 和存档日期是网页上的注记，不是句子的一部分
+        p = re.sub(r"\[\d+\]", "", p)
+        p = re.sub(r"\s*Archived \d{4}-\d{2}-\d{2}", "", p).strip()
+        # 列表：一行一个词（Bagel / Baguette / Croissant），读起来不是文章，跳过；
+        # 引出列表的那句（以冒号结尾）也一起跳过，不然后面接的不是它说的东西。
+        if not p or p.endswith(":") or (wc(p) < 6 and not re.search(r'[.!?"”]$', p)):
+            continue
+        out.append(p)
+    return out
+
+
 def build_wiki(items):
-    for title in WIKI:
+    seen = set()
+    for topic, title in [(tp, t) for tp, ts in WIKI for t in ts]:
         try:
             u = ("https://simple.wikipedia.org/w/api.php?action=query&format=json&origin=*"
                  "&prop=extracts&explaintext=1&redirects=1&titles=" + urllib.parse.quote(title))
@@ -435,9 +480,13 @@ def build_wiki(items):
         except Exception as e:
             log("  ! %s 取不到：%r" % (title, e))
             continue
+        if "missing" in page or not txt.strip():
+            log("  ! %s 简单英语维基没有这个词条，跳过" % title)
+            continue
         # 去掉「Related pages / References」之后的部分，那些不是正文
         txt = re.split(r"\n==+ ?(Related pages|References|Other websites|Sources)", txt)[0]
         paras = [p.strip() for p in txt.split("\n") if p.strip() and not p.strip().startswith("==")]
+        paras = clean_wiki(paras)
         if not paras:
             continue
         real = page.get("title", title)
@@ -450,19 +499,25 @@ def build_wiki(items):
             if n >= 600:
                 break
         one = make_one(lead, ("A2", "B1"))
+        # 两个标题跳到同一个词条（Panda → Giant panda）只收一次
+        if one and ("sw-%s" % slug(real)) in seen:
+            continue
+        if not one:
+            log("  · %s 太短（不到 %d 词），不收" % (title, MIN_WORDS))
         if one:
+            seen.add("sw-%s" % slug(real))
             text, lv, g = one
             items.append({
                 "id": "sw-%s" % slug(real),
                 "title": real,
-                "book": "Simple English Wikipedia", "author": "维基百科编者", "kind": "科普",
+                "book": "Simple English Wikipedia", "author": "维基百科编者", "kind": topic,
                 "lv": lv, "words": wc(text), "fog": g["fog"], "fre": g["fre"],
                 "src": "Simple English Wikipedia",
                 "srcUrl": "https://simple.wikipedia.org/wiki/" + urllib.parse.quote(real.replace(" ", "_")),
                 "lic": "CC BY-SA 4.0",
                 "text": text,
             })
-        log("  维基 %s ✓" % title)
+            log("  维基 %s ✓" % title)
 
 
 def balance(items, per_lv):
@@ -493,6 +548,46 @@ def balance(items, per_lv):
     return out
 
 
+# 有意下架的已发布篇目：id → 为什么。只有写在这里的，才允许这次没生成出来。
+RETIRED = {
+    "sw-noodle": "2026-11-14 加了列表清理后不到 110 词——这一篇几乎整篇是面条品种的清单，不是文章",
+}
+
+
+def pick(items, per):
+    """决定最后收哪些。
+
+    已经发布过的篇目原样保留（按上一版 索引.json 里的 id 认）：用户本地可能
+    存着它的正文、「读过的」里也可能有它，换掉就对不上了。只有第一次建库
+    （还没有索引）才用 balance 按难度均分。
+    在此之上，**维基词条全收**——它们只落在入门、基础两档（A2、B1），以前被
+    「每档 20 篇」的上限挡在门外，这两档的量因此一直不够读。"""
+    idx = os.path.join(OUT, "索引.json")
+    by_id = {}
+    for x in items:
+        by_id.setdefault(x["id"], x)
+    if os.path.exists(idx):
+        old = [x["id"] for x in json.load(open(idx, encoding="utf-8"))["items"]]
+        for i in old:
+            if i in RETIRED and i not in by_id:
+                log("\n下架 %s：%s" % (i, RETIRED[i]))
+        old = [i for i in old if not (i in RETIRED and i not in by_id)]
+        lost = [i for i in old if i not in by_id]
+        if lost:
+            log("\n!! 上一版有、这次却没生成出来的篇目：%s" % ", ".join(lost))
+            log("!! 多半是缓存被删、对方网站改了内容。没有写入任何文件，先查清楚再跑")
+            return None
+        base = [by_id[i] for i in old]
+        log("\n沿用上一版的 %d 篇" % len(base))
+    else:
+        base = balance(list(by_id.values()), per)
+    have = {x["id"] for x in base}
+    extra = [x for x in by_id.values() if x["src"] == "Simple English Wikipedia" and x["id"] not in have]
+    extra.sort(key=lambda x: (ORDER.index(x["lv"]), x["words"]))
+    log("新增维基 %d 篇" % len(extra))
+    return base + extra
+
+
 def main():
     items = []
     log("== 古登堡 ==")
@@ -505,7 +600,9 @@ def main():
         log("  %s  %d" % (lv, sum(1 for x in items if x["lv"] == lv)))
 
     per = int(sys.argv[1]) if len(sys.argv) > 1 else 20
-    final = balance(items, per)
+    final = pick(items, per)
+    if final is None:
+        sys.exit(1)
 
     os.makedirs(os.path.join(OUT, "篇目"), exist_ok=True)
     # 清掉上一次的产物，免得删掉的篇目还留在仓库里
