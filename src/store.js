@@ -85,7 +85,8 @@ export function useStore() {
 
   function canOpenNewTab() {
     if (tabs.length >= MAX_TABS) {
-      showToast(`最多同时开 ${MAX_TABS} 个标签页，先关掉几个吧`);
+      // 连载是连着的，最容易撞上这个上限：把原因一起说清，别让人以为按钮坏了
+      showToast(`最多同时开 ${MAX_TABS} 个标签页。顶上标题栏点 × 收起几篇（收起的留在「读过的」里，随时能翻回来）`);
       return false;
     }
     return true;
@@ -611,9 +612,17 @@ export function useStore() {
        而 state 要下一轮才更新，读 weaveOn 会读到旧的 false。 */
     const weave = (opts && opts.weave) || (weaveOn ? weavePicked : []);
 
+    /* 接着读（opts.follow）：同一个主题写下一篇，而不是随便再来一篇。
+       一次只写一篇，所以「上一篇写了什么」只能靠传：标题、开头、篇末留给
+       下一段的那句（next_hint）。有了它，两篇之间是接得上的一段话，不是
+       同一个话题里两篇互不相干的短文——同一批词在延续的语境里反复出现，
+       句子也越读越顺。第一段单独处理，由模型自己选个能把话接着说下去的角度。 */
+    const follow = opts && opts.follow;
+    const fTopic = follow ? ((follow.topic || "").trim() || (follow.title || "").trim()) : "";
+
     // 主题可以留空——那就让模型照着生词自己找情境，硬填主题写出来反而生硬。
     // 但两者不能都空：没主题又没词，模型只会翻来覆去写那几个万金油话题。
-    if (!theTopic && !weave.length) {
+    if (!theTopic && !weave.length && !follow) {
       showToast("写个主题，或者打开生词复习选几个词");
       return;
     }
@@ -635,9 +644,18 @@ export function useStore() {
       ? `\n- 请自然地用上这些单词（是学习者的生词，帮 TA 复习）：${weave.join(", ")}。个别词若与该难度实在不符可省略，切勿生硬堆砌`
       : "";
 
-    const openLine = theTopic
+    const openLine = follow
+      ? `这是在接着写一篇连载，${fTopic ? `大主题是「${fTopic}」` : "延续上一篇的话题"}，写第 ${(follow.part || 1) + 1} 部分。请读一下上一篇的开头，接着往下写。`
+      : theTopic
       ? `请以主题「${theTopic}」为内容，写一篇 ${lv.tag}（CEFR ${lv.id}）水平的英语短文。`
       : `请写一篇 ${lv.tag}（CEFR ${lv.id}）水平的英语短文，主题由你来定——围绕下面那些生词，自己想一个能把它们自然串起来的真实情境。挑话题时以"哪种情境用得上这些词"为准，不要为了凑词而选一个牵强的话题；成文要像一篇正经文章，不能像单词练习。`;
+
+    /* 上一篇的开头若干段：给模型看它是怎么起头的，好接上语气和说法。
+       只给开头不给全文——全文会撑大请求，也容易让它照着复述。 */
+    const prevLine = follow
+      ? `\n\n上一部分《${(follow.title || "").slice(0, 80)}》的开头（供你接着写，不要复述，也不要重写这部分）：\n${String(follow.excerpt || "").slice(0, 900)}`
+        + (follow.next_hint ? `\n\n上一部分结尾留下的那句话，下一个部分请从这里接着展开：「${String(follow.next_hint).slice(0, 200)}」` : "")
+      : "";
 
     const prompt = `你是一位专业的英语分级阅读内容作者。${openLine}
 
@@ -648,10 +666,11 @@ export function useStore() {
 - **只写已被确认的知识**：科学共识、公认的历史事实、教科书级别的常识。绝不写伪科学、民间偏方、都市传说、阴谋论，也不写"据说""有人认为"这类没有依据的说法
 - **拿不准就不写**：不要编造具体数字、年份、人名、机构名、研究结论或引语。宁可只讲定性的、大方向上不会错的内容，也不要为了具体而编
 - 若这个话题学界本身尚无定论，就如实写明目前还有争议，不要挑一边当成结论讲
-- 标题简洁吸引人${weaveLine}
+- 标题简洁吸引人${weaveLine}${follow ? `
+- 这是连载的第 ${(follow.part || 1) + 1} 部分：要能独立看懂，开头别用"如前所述"这种依赖上一篇的说法；但主题、人物、场景要和上一篇一致，结尾要自然留下一个能接着往下讲的话头` : ""}${prevLine}
 
 只返回 JSON，不要任何其他文字、解释或 markdown 代码块：
-{"title":"英文标题","content":"英文正文，段落之间用\\n\\n分隔","cn_intro":"一句话中文导读，25字以内","topic_cn":"本文话题的中文短标签，4-10字，如「桥梁工程」「城市里的鸟」"}`;
+{"title":"英文标题","content":"英文正文，段落之间用\\n\\n分隔","cn_intro":"一句话中文导读，25字以内","topic_cn":"本文话题的中文短标签，4-10字，如「桥梁工程」「城市里的鸟」"${follow ? ',"next_hint":"本文结尾留下的那句话，用英文原句，20 词以内"' : ""}}`;
 
     try {
       const data = await callClaude(prompt, apiKey, model, null, providerId);
@@ -684,6 +703,12 @@ export function useStore() {
         autoTopic: !theTopic,
         level: theLevel,
         woven,
+        /* 连载：哪一组、第几部分。老文章没有这个字段，一律当「不在连载里」。 */
+        ...(follow ? {
+          series: (follow.series || "").trim() || (follow.title || "").trim(),
+          part: (follow.part || 1) + 1,
+          next_hint: String(data.next_hint || "").slice(0, 220),
+        } : data.next_hint ? { next_hint: String(data.next_hint).slice(0, 220) } : {}),
       };
       const nextTabs = wantNewTab ? [...tabs, art] : tabs.map((x) => (x.id === activeId ? art : x));
       if (!persistTabs(nextTabs, tabId)) return;
@@ -714,6 +739,43 @@ export function useStore() {
     } finally {
       if (request === articleReqRef.current) setGenLoading(false);
     }
+  }
+
+  /* 接着读：以当前这篇为上一部分，写下一篇。
+     用「原地替换」还是「新开一页」：新开一页。上一篇得留着，回头能翻，
+     而且读过的东西不该被顶掉。同时把上一篇点过的词交给模型接着用——同一批词
+     在连着读的几篇里反复出现，比每篇各换一批词更容易记住。 */
+  function continueSeries() {
+    if (!article || genLoading || article.imported) return;
+    const first = (article.chapters || [])[0] || "";
+    const prevWords = dedupeWords();
+    generateArticle("", article.level, {
+      newTab: true,
+      follow: {
+        series: article.series || article.title || "",
+        part: article.part || 1,
+        topic: article.autoTopic ? "" : article.topic,
+        title: article.title,
+        excerpt: first,
+        next_hint: article.next_hint || "",
+      },
+      weave: prevWords,
+    });
+  }
+  /* 这一篇正文里出现过的、你存过的词，按第一次出现的顺序，最多 8 个 */
+  function dedupeWords() {
+    const text = (article?.chapters || []).join(" ").toLowerCase();
+    if (!text) return [];
+    const out = [];
+    for (const v of vocab) {
+      if (out.length >= 8) break;
+      const d = v.data;
+      if (!d || d.type !== "en" || !d.word) continue;
+      const w = d.word.toLowerCase();
+      if (w.length < 4) continue;
+      if (new RegExp(`\\b${escapeReg(w)}[a-z]*\\b`).test(text) && !out.includes(d.word)) out.push(d.word);
+    }
+    return out;
   }
 
   /* ---- 查词 ---- */
@@ -1825,7 +1887,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
 
   /* 交给界面用的全部东西。界面要用到新的状态或动作时，把名字加进这张清单。 */
   return {
-    applyLevel, chRead, confirmRestore, exportBackup, markRead, pickBackupFile, restore, setRestore,
+    applyLevel, chRead, confirmRestore, continueSeries, exportBackup, markRead, pickBackupFile, restore, setRestore,
     activeId, addChatWord, advanceShadow, analyzeSentence, answerReview, apiKey, appStyle, article,
     askWord, backToWord, books, booksBusy, booksErr, cachedBooks, chapters, chIdx, chipCat, chips,
     clearSetupKey, clearVocab, clickedRef, clicks, closeDict, closeTab, confirmClear, copyVocab,

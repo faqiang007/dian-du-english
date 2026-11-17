@@ -5,7 +5,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, Globe, Languages, Loader2,
+  BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, ExternalLink, Globe, Languages, Loader2,
   Mic, Play, Plus, Puzzle, RefreshCw, Sparkles, Square, Volume2, X,
 } from "lucide-react";
 import { LEVELS } from "../data/levels.js";
@@ -15,7 +15,7 @@ import { formsOf, isMastered } from "../lib/vocab.js";
 export function ReaderView({ app, peek, onExpand }) {
   const {
     article, tabs, activeId, switchTab, closeTab, openBlankTab,
-    genLoading, genError, topic, reTopicOf, generateArticle,
+    genLoading, genError, topic, reTopicOf, generateArticle, continueSeries,
     reading, toggleReadArticle, toggleTrans, transBusy, showTrans, startShadow, shadow,
     quiz, go, lvHint, setLvHint, clicks, clickedRef, setLevel, setStats, showToast, lvMenu, setLvMenu,
     curWords, curMins, chapters, chIdx, gotoCh, curText, curTrans,
@@ -91,6 +91,7 @@ export function ReaderView({ app, peek, onExpand }) {
   }
 
   const lvOf = (id) => LEVELS.find((l) => l.id === id);
+  const part = article.part || 1;   // 连载里的第几部分；普通文章是 1
   const looked = [...clickedRef.current]; // 本章点过的词；clicks 变了会重画，所以这里读得到最新的
   const last = chIdx >= chapters.length - 1;
 
@@ -174,6 +175,7 @@ export function ReaderView({ app, peek, onExpand }) {
             <i>·</i>约 {curWords} 词
             <i>·</i>{curMins} 分钟
             <i>·</i>主题「{article.topic}」
+            {part > 1 && <><i>·</i><span title="接着上一篇往下写">连载第 {part} 部分</span></>}
             <i>·</i>
             <button className="link quiet"
               onClick={() => generateArticle(reTopicOf(article), article.level, { newTab: true })}>
@@ -250,6 +252,13 @@ export function ReaderView({ app, peek, onExpand }) {
           {!last && (
             <button className="btn pri lg" onClick={() => gotoCh(chIdx + 1)}>
               下一章 <ChevronRight size={15} />
+            </button>
+          )}
+          {/* AI 现写的文章：读完直接接着写下一篇，同一个主题、同一批词。
+              不用再想读什么——想停就停，想读就一直往下读。 */}
+          {last && !article.imported && (
+            <button className="btn pri lg" onClick={continueSeries} disabled={genLoading}>
+              <BookOpen size={15} /> 接着读第 {part + 1} 部分
             </button>
           )}
           <button className="next-ge" onClick={() => go("quiz")}>

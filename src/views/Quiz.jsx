@@ -7,7 +7,7 @@ import { BookOpen, ChevronRight, ClipboardCheck, Loader2, Plus, RefreshCw } from
 export function QuizView({ app }) {
   const {
     article, quiz, startQuiz, pickOption, nextQuestion, saveMissedWords, savedKeys,
-    generateArticle, reTopicOf, setHomeMode, go, chapters, chIdx, level, applyLevel,
+    generateArticle, continueSeries, reTopicOf, setHomeMode, go, chapters, chIdx, level, applyLevel,
   } = app;
 
   /* 每道题对没对。store 里只记总分，这里自己记一份用来画三个格子。
@@ -107,8 +107,13 @@ export function QuizView({ app }) {
         )}
 
         <div className="hall-a">
+          {!article.imported && (
+            <button className="btn pri lg" onClick={continueSeries}>
+              <BookOpen size={15} /> 接着读第 {(article.part || 1) + 1} 部分
+            </button>
+          )}
           <button className="btn sec lg" onClick={() => generateArticle(reTopicOf(article))}>
-            <RefreshCw size={15} /> 再来一篇
+            <RefreshCw size={15} /> 换一篇新的
           </button>
         </div>
       </div>
