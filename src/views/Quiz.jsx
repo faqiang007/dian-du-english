@@ -1,7 +1,6 @@
 /* 测：读后小测自己占一格。一屏一道题，三道题对应三个小格——
    答对的格子里是黑色的勾，答错的是红色的叉（老师的红笔）。 */
 
-import { useEffect, useState } from "react";
 import { BookOpen, ChevronRight, ClipboardCheck, Loader2, Plus, RefreshCw } from "lucide-react";
 
 export function QuizView({ app }) {
@@ -10,14 +9,10 @@ export function QuizView({ app }) {
     generateArticle, continueSeries, reTopicOf, setHomeMode, go, chapters, chIdx, level, applyLevel,
   } = app;
 
-  /* 每道题对没对。store 里只记总分，这里自己记一份用来画三个格子。
-     题目换了一套（qs 变了）就清空重记。 */
-  const [marks, setMarks] = useState([]);
-  useEffect(() => { setMarks([]); }, [quiz.qs]);
-  useEffect(() => {
-    if (quiz.st !== "on" || quiz.sel === null) return;
-    setMarks((m) => { const n = [...m]; n[quiz.i] = quiz.sel === quiz.qs[quiz.i].answer; return n; });
-  }, [quiz.st, quiz.sel, quiz.i]);
+  /* 每道题对没对，画成三个格子。记在 store 的 quiz.marks 里，不放在本组件——
+     以前用 useState 存在这里，点「回看原文」组件一卸载就清空，回来题目还在、
+     勾叉却没了，看不出刚才哪题错了。 */
+  const marks = quiz.marks || [];
 
   const backToText = () => { setHomeMode(false); go("read"); };
 

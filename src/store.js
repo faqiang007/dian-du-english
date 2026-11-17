@@ -401,19 +401,53 @@ export function useStore() {
   /* 「读完一章」的记账。只有真读到章末才记（界面那边还会卡一个最短停留时间），
      记的是这一章的词数——「今天读了多少词」是阅读这件事唯一老实的进度。
      以前打开一篇文章就算读了，每日格子里的「读」等于白送。
-     同一章在这次打开期间只记一次；重读、换一篇会把记号清掉（forgetRead）。 */
+
+     记号必须落盘（放在统计的 log 里，key 是 wd）。以前只存在内存的 Set 里，
+     刷新一下就没了：同一章再滚到文末会再记一次词数，「今天读了多少词」和
+     足迹里的柱状图凭空多出一章。所以每次记账都连同一份章号清单写进当天
+     的统计条目——只加字段，不动已有字段的含义。
+     forgetRead 会把内存和落盘的一起清掉：它管的是「这篇之后还能不能再记一次」，
+     重读、原地换一篇本来就该重新记。 */
   const readMarksRef = useRef(new Set());
+  /* 这一章今天是不是已经记过词数了。内存里的 Set 管「这次打开」，落盘的 wd 管
+     「今天」——两者都要看，缺一个就会出现刷新后重复计数。 */
+  const readToday = (k) => {
+    const day = (stats.log || {})[dateStr()] || {};
+    return Array.isArray(day.wd) && day.wd.includes(k);
+  };
   function markRead() {
     if (!article || !curWords) return;
     const k = article.id + ":" + chIdx;
-    if (readMarksRef.current.has(k)) return;
+    if (readMarksRef.current.has(k) || readToday(k)) return;
     readMarksRef.current.add(k);
-    bumpStat("w", curWords);
+    /* 一次 setStats 同时记词数和章号：词数走「今天读了多少词」，章号是防重复的
+       清单。分成两次写会让统计的两次更新互相比旧值，多一个来回。 */
+    setStats((s) => {
+      const d = dateStr();
+      const day = s.log[d] || {};
+      const wd = Array.isArray(day.wd) ? [...day.wd] : [];
+      if (!wd.includes(k)) wd.push(k);
+      return {
+        ...s,
+        log: { ...s.log, [d]: { ...day, wd, w: (day.w || 0) + curWords } },
+      };
+    });
   }
+  /* 清掉「这篇已经记过」的记号，让它之后还能再记一次（重读、原地换一篇都走这里）。
+     落盘的 wd 也要一起清：只清内存的话，重读同一章会被 readToday 挡住，
+     「重读照样记词数」这条就不成立了。 */
   function forgetRead(id) {
     for (const k of [...readMarksRef.current]) if (k.startsWith(id + ":")) readMarksRef.current.delete(k);
+    setStats((s) => {
+      const d = dateStr();
+      const day = s.log[d];
+      if (!day || !Array.isArray(day.wd) || !day.wd.some((k) => k.startsWith(id + ":"))) return s;
+      return { ...s, log: { ...s.log, [d]: { ...day, wd: day.wd.filter((k) => !k.startsWith(id + ":")) } } };
+    });
   }
-  const chRead = !!article && readMarksRef.current.has(article.id + ":" + chIdx);
+  /* 界面上的「这一章读完了」提示也要认落盘的记号，否则刷新回来的读者看到的是
+     没读完——而他其实已经读完、词数也记过了。 */
+  const chRead = !!article && (readMarksRef.current.has(article.id + ":" + chIdx) || readToday(article.id + ":" + chIdx));
 
   /* 每天记一笔"当前已掌握多少词"。词条上只有当前的 streak，没有变化历史，
      不记快照就永远画不出增长曲线。只在数字变了时写，避免无谓的重渲染。
@@ -1248,11 +1282,15 @@ ${curText}
       if (request !== quizReqRef.current) return;
       if (!validQuizQuestions(data.questions)) throw new Error("bad");
       const qs = data.questions;
-      setQuiz({ st: "on", qs, i: 0, sel: null, score: 0, missed: [] });
+      setQuiz({ st: "on", qs, i: 0, sel: null, score: 0, missed: [], marks: [] });
     } catch (e) {
       if (request === quizReqRef.current) setQuiz({ st: "err" });
     }
   }
+  /* 答对答错的三个格子在 store 里记（marks），不放在界面里。
+     以前它在 QuizView 的 useState 里，去「回看原文」再回来，组件一卸载
+     就清空了——题目留着、勾叉没了，回来根本看不出刚才哪题错了。
+     现在跟着 quiz 这份状态走，换一套题才重置。 */
   function pickOption(oi) {
     if (quiz.st !== "on" || quiz.sel !== null) return;
     const q = quiz.qs[quiz.i];
@@ -1264,7 +1302,9 @@ ${curText}
     const next = !right && w && !missed.some((m) => m.w.toLowerCase() === w.toLowerCase())
       ? [...missed, { w, cn: (q.word_cn || "").trim() }]
       : missed;
-    setQuiz({ ...quiz, sel: oi, score: quiz.score + (right ? 1 : 0), missed: next });
+    const marks = [...(quiz.marks || [])];
+    marks[quiz.i] = right;
+    setQuiz({ ...quiz, sel: oi, score: quiz.score + (right ? 1 : 0), missed: next, marks });
   }
   function nextQuestion() {
     if (quiz.st !== "on") return;
@@ -1285,7 +1325,7 @@ ${curText}
       const nl = LEVELS[idx - 1];
       adj = { dir: "down", to: nl.id, label: nl.label, tag: nl.tag };
     }
-    setQuiz({ st: "done", qs: quiz.qs, score: quiz.score, adj, missed: quiz.missed || [] });
+    setQuiz({ st: "done", qs: quiz.qs, score: quiz.score, adj, missed: quiz.missed || [], marks: quiz.marks || [] });
   }
   /* 换难度：下一篇生效，正在读的这篇不动 */
   function applyLevel(id) {
