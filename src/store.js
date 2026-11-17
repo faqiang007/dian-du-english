@@ -99,16 +99,19 @@ export function useStore() {
     return false;
   }
   /* 文章要被销毁前先留一份。同一篇重复归档时按 id 去重并提到最前，
-     免得同一篇在「读过的」里出现好几遍。 */
+     免得同一篇在「读过的」里出现好几遍。
+
+     这里原先是一张手写的白名单，只挑几个字段抄过去。每加一个新字段就得记得
+     回来补一笔，漏一个就会在重读时丢东西——连载的 series / part / next_hint
+     就是这么漏掉的：整篇读完关掉标签，从「读过的」重读，再点「接着读」，
+     会从头写出「第 2 部分」，上一篇结尾留下的那句衔接话也没了；真实文章的
+     srcDate 同样没带过去，重读后出处的日期消失。
+     所以改成只排除不该进归档的两样（译文占地方且能重新生成、章号重读时归零），
+     其余原样带上。以后再往上加字段，这里不用动。 */
   function archive(art) {
     if (!art || !(art.chapters || []).length) return;
-    const rec = {
-      id: art.id, title: art.title, topic: art.topic, autoTopic: art.autoTopic,
-      level: art.level, cn_intro: art.cn_intro || "", chapters: art.chapters,
-      woven: art.woven || [], imported: !!art.imported,
-      srcUrl: art.srcUrl || "", srcSite: art.srcSite || "",
-      readAt: Date.now(),
-    };
+    const { trans, ch, readAt, ...rest } = art;
+    const rec = { ...rest, readAt: Date.now() };
     setHistory((hs) => trimHistory([rec, ...hs.filter((h) => h.id !== art.id)]));
   }
 
@@ -140,8 +143,9 @@ export function useStore() {
     if (open) { switchTab(h.id); setView("read"); return; }
     if (!canOpenNewTab()) return;
     hardStop();
-    const art = { ...h, ch: 0, trans: {} };
-    delete art.readAt;
+    // readAt 是「读过的」列表用的时间戳，不属于文章本身，别带进标签页
+    const { readAt, ...rest } = h;
+    const art = { ...rest, ch: 0, trans: {} };
     const nextTabs = [...tabs, art];
     if (!persistTabs(nextTabs, h.id)) return;
     resetReadingContext();
