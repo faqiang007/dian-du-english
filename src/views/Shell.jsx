@@ -3,7 +3,7 @@
    它们不属于任何一格，所以放在这里。 */
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, Languages, RotateCcw, Search, Settings, Turtle, X } from "lucide-react";
+import { ChevronRight, Languages, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Turtle, X } from "lucide-react";
 import { SQUARES, todayMarks } from "../lib/day.js";
 import { DeskView } from "./Desk.jsx";
 import { DictPanel } from "./Dict.jsx";
@@ -32,7 +32,7 @@ function useNarrow() {
 export function Shell({ app }) {
   const {
     appStyle, view, article, homeMode, genLoading, dict, dictOpen, closeDict,
-    selTip, setSelTip, lookup, translateText, shadow, setShadow, flatSents, playShadow, advanceShadow, exitShadow, toast,
+    prefs, setPrefs, selTip, setSelTip, lookup, translateText, shadow, setShadow, flatSents, playShadow, advanceShadow, exitShadow, toast,
   } = app;
   const narrow = useNarrow();
   const [omni, setOmni] = useState(false);
@@ -68,7 +68,7 @@ export function Shell({ app }) {
   }, [omni, drawer]);
 
   return (
-    <div className="app" style={appStyle}>
+    <div className={prefs.navFold ? "app folded" : "app"} style={appStyle}>
       <Rail app={app} station={station} onOmni={() => setOmni(true)} />
 
       <main className={drawer ? "stage with-drawer" : "stage"}>
@@ -145,7 +145,11 @@ export function Shell({ app }) {
    今、说、藏不算每天的格子，是普通的灰格。 */
 
 function Rail({ app, station, onOmni }) {
-  const { go, setHomeMode, stats, dueList, streak, view } = app;
+  const { go, setHomeMode, stats, dueList, streak, view, prefs, setPrefs } = app;
+  /* 收起状态记在偏好里（dd-prefs-v1 的 navFold），下次打开还是收着的。
+     这个字段早就留着，只是一直没接上按钮。 */
+  const folded = !!prefs.navFold;
+  const fold = () => setPrefs((p) => ({ ...p, navFold: !p.navFold }));
   const { done } = todayMarks(stats, dueList.length);
   // 记住上次在「藏」里看的是哪一页，回来时还在那一页
   const keepRef = useRef("vocab");
@@ -174,7 +178,19 @@ function Rail({ app, station, onOmni }) {
 
   return (
     <nav className="rail" aria-label="今日三格与导航">
-      <button className="seal" onClick={goto.今} aria-label="007学英语 · 回到今天">007</button>
+      {folded ? (
+        // 收起后只剩这一格：图标朝右，点是展开
+        <button className="rail-b rail-fold" onClick={fold} aria-label="展开左侧栏" title="展开左侧栏">
+          <PanelLeftOpen size={17} />
+        </button>
+      ) : (
+        <>
+          <button className="seal" onClick={goto.今} aria-label="007学英语 · 回到今天">007</button>
+          <button className="rail-fold" onClick={fold} aria-label="收起左侧栏" title="收起左侧栏">
+            <PanelLeftClose size={17} />
+          </button>
+        </>
+      )}
       <div className="rail-main">
         {cell("今")}
         <span className="rail-gap" />

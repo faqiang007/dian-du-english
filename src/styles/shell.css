@@ -55,6 +55,21 @@
 .rail-n{position:absolute;top:1px;right:0;min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:var(--red);color:var(--on-red);
   font-style:normal;font-size:10.5px;font-weight:700;line-height:17px;text-align:center;font-variant-numeric:tabular-nums}
 .rail-foot{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:2px}
+/* ---- 收起左栏 ----
+   宽屏时把这一列缩成一条窄边，只留右上角那格「展开」。正文跟着左移，
+   读长文时多出 76px 的宽度，眼睛也不用被左边那列格子分走。
+   窄屏不适用：手机上这列本来就躺在底部，没有可收的空间。 */
+.rail-fold{align-self:flex-end;margin:-6px 4px 0 0;display:grid;place-items:center;width:34px;height:34px;
+  border-radius:8px;color:var(--mut)}
+.rail-fold:hover{background:var(--line2);color:var(--ink)}
+.app.folded{--rail:22px}
+.app.folded .rail{padding:10px 0;overflow:hidden}
+.app.folded .rail-main,.app.folded .rail-gap,.app.folded .rail-streak,.app.folded .rail-b:not(.rail-fold){display:none}
+.app.folded .rail-foot{margin-top:0}
+.app.folded .rail-foot>.rail-b:not(.rail-fold){display:none}
+.app.folded .rail-fold{margin:0;align-self:center}
+/* 正文左移时给点过渡，别一下子跳过去 */
+.stage{transition:margin-left .22s ease,padding-right .22s ease}
 .rail-streak{margin-top:8px;padding-top:10px;border-top:1px solid var(--line);font-size:11px;color:var(--mut);text-align:center;line-height:1.3}
 .rail-streak b{display:block;font-family:var(--display);font-size:20px;color:var(--ink);font-feature-settings:"lnum"}
 
@@ -121,7 +136,7 @@
   :root{--gutter:18px;--rail:0px}
   .rail{top:auto;right:0;width:auto;height:62px;flex-direction:row;justify-content:space-between;padding:0 6px;
     border-right:none;border-top:1px solid var(--line)}
-  .rail>.seal,.rail-gap,.rail-streak{display:none}
+  .rail>.seal,.rail-gap,.rail-streak,.rail-fold{display:none}
   .rail-main,.rail-foot{flex-direction:row;margin:0;gap:0}
   .rail-b{width:42px;height:50px}
   .rail-b .ge{--s:36px}
