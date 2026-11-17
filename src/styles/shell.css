@@ -4,7 +4,7 @@
    ========================================================= */
 
 /* ---- 米字格：一个方格，里面一个楷体字 ----
-   红字 = 还没写；.done 黑字 = 写过了；.plain = 不属于今日四格的普通格子。
+   红字 = 还没写；.done 黑字 = 写过了；.plain = 不属于今日三格的普通格子。
    大小用 --s 调，字跟着格子走。 */
 .ge{--s:44px;display:inline-grid;place-items:center;width:var(--s);height:var(--s);flex:none;
   border:1.5px solid var(--grid);border-radius:3px;font-family:var(--kai);font-style:normal;font-weight:400;
@@ -89,8 +89,12 @@
 .omni-box .omni-in{box-shadow:var(--float)}
 
 /* ---- 浮在最上面的小东西 ---- */
-.seltip{position:fixed;z-index:85;transform:translateX(-50%);display:inline-flex;align-items:center;gap:5px;
-  background:var(--ink);color:var(--paper);font-size:13px;font-weight:600;border-radius:99px;padding:7px 14px;box-shadow:var(--float)}
+/* 划词气泡：一到两个按钮（查词组 / 译）并排在一颗胶囊里 */
+.seltip{position:fixed;z-index:85;transform:translateX(-50%);display:inline-flex;overflow:hidden;
+  background:var(--ink);border-radius:99px;box-shadow:var(--float)}
+.seltip button{display:inline-flex;align-items:center;gap:5px;color:var(--paper);font-size:13px;font-weight:600;padding:7px 14px;white-space:nowrap}
+.seltip button+button{border-left:1px solid var(--mut)}
+.seltip button:hover{background:var(--ink2)}
 .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);z-index:99;max-width:92vw;
   background:var(--ink);color:var(--paper);font-size:13.5px;border-radius:99px;padding:9px 20px;
   box-shadow:var(--float);animation:toast-in .2s ease}
@@ -122,7 +126,9 @@
   .rail-b{width:42px;height:50px}
   .rail-b .ge{--s:36px}
   .stage{padding-bottom:72px}
-  .drawer{border-left:none;padding:26px var(--gutter) 110px;transform:translateY(104%)}
+  /* 窄屏一律盖满整屏。只写 min(420px,100vw) 的话，窗口在 421–880px 之间
+     （比如半屏并排）时词典只盖住右半边，正文被拦腰截断。 */
+  .drawer{width:100vw;border-left:none;padding:26px var(--gutter) 110px;transform:translateY(104%)}
   .toast{bottom:76px}
   .shadowbar{bottom:72px;left:50%}
   .omni-layer{padding-top:8vh}

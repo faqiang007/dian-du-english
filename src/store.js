@@ -17,15 +17,17 @@ import { epubToText } from "./lib/epub.js";
 import { clampRate, scoreVoice } from "./lib/speech.js";
 import {
   ARTICLE_KEY, HISTORY_KEY, KEYS_STORE, MODELS_STORE, PREFS_KEY, PROVIDER_STORE, STATS_KEY,
-  TABS_KEY, VOCAB_KEY, isFullEntry, loadBookCache, loadDictCache, loadSeen, sGet, sSet,
-  saveBookCache, saveDictCache, saveSeen, stripCtx, trimHistory,
+  TABS_KEY, VOCAB_KEY, applyBackup, isFullEntry, loadBookCache, loadDictCache, loadSeen, parseBackup,
+  sGet, sSet, saveBookCache, saveDictCache, saveSeen, stripCtx, trimHistory,
+  BACKUP_MARK, SEEN_KEY,
 } from "./lib/storage.js";
 import {
   DAY, calcStreak, countWords, dateStr, escapeReg, hostOf, looksLikeSentence, normalizeTab,
   pickChips, samePage, splitChapters, splitSentences,
 } from "./lib/text.js";
 import {
-  WEAVE_MAX, buildVocabMd, isMastered, parseVocabMd, rvOf, validQuizQuestions, weaveTermOf,
+  REVIEW_BATCH, WEAVE_MAX, buildVocabMd, firstDue, formsOf, isMastered, keepSent, parseVocabMd, rvOf,
+  spotIn, validQuizQuestions, weaveTermOf,
 } from "./lib/vocab.js";
 import mammoth from "mammoth";
 
@@ -55,7 +57,7 @@ export function useStore() {
   const [activeId, setActiveId] = useState(null);
   /* 「我正在主页」是一件独立的事，不能拿 activeId=null 表示——那样一进主页
      就把「我在读哪篇」一起丢了，再点「阅读」没东西可回。文章始终留着。 */
-  const [homeMode, setHomeMode] = useState(true);   // 每次打开先落在「今」：先看今天四格还差哪格
+  const [homeMode, setHomeMode] = useState(true);   // 每次打开先落在「今」：先看今天三格还差哪格
   const article = useMemo(() => tabs.find((t) => t.id === activeId) || null, [tabs, activeId]);
 
   /* 当前正在读的那一章。全篇存在 article.chapters 里，
@@ -118,6 +120,7 @@ export function useStore() {
       cancelArticleGeneration();
     }
     archive(tabs.find((t) => t.id === id));
+    forgetRead(id);
     setTabs((ts) => {
       const next = ts.filter((t) => t.id !== id);
       if (id === activeId) {
@@ -142,10 +145,11 @@ export function useStore() {
     if (!persistTabs(nextTabs, h.id)) return;
     resetReadingContext();
     cancelArticleGeneration();
+    forgetRead(h.id); // 重读是真的又读一遍，读到章末照样记词数
     setTabs(nextTabs);
     setActiveId(h.id);
     setView("read");
-    bumpStat("c"); // 重读一篇也算今天读了，理由同翻章
+    bumpStat("c"); // 记一笔「重读」。算不算今天读了，看有没有读到章末（markRead）
     window.scrollTo({ top: 0 });
   }
 
@@ -392,6 +396,23 @@ export function useStore() {
       return { ...s, log: { ...s.log, [d]: { ...day, [k]: (day[k] || 0) + n } } };
     });
   }
+
+  /* 「读完一章」的记账。只有真读到章末才记（界面那边还会卡一个最短停留时间），
+     记的是这一章的词数——「今天读了多少词」是阅读这件事唯一老实的进度。
+     以前打开一篇文章就算读了，每日格子里的「读」等于白送。
+     同一章在这次打开期间只记一次；重读、换一篇会把记号清掉（forgetRead）。 */
+  const readMarksRef = useRef(new Set());
+  function markRead() {
+    if (!article || !curWords) return;
+    const k = article.id + ":" + chIdx;
+    if (readMarksRef.current.has(k)) return;
+    readMarksRef.current.add(k);
+    bumpStat("w", curWords);
+  }
+  function forgetRead(id) {
+    for (const k of [...readMarksRef.current]) if (k.startsWith(id + ":")) readMarksRef.current.delete(k);
+  }
+  const chRead = !!article && readMarksRef.current.has(article.id + ":" + chIdx);
 
   /* 每天记一笔"当前已掌握多少词"。词条上只有当前的 streak，没有变化历史，
      不记快照就永远画不出增长曲线。只在数字变了时写，避免无谓的重渲染。
@@ -668,6 +689,7 @@ export function useStore() {
       if (!persistTabs(nextTabs, tabId)) return;
       // 原地替换会把当前这篇彻底覆盖掉，确认新快照能存下后再归档。
       if (!wantNewTab) archive(tabs.find((t) => t.id === activeId));
+      forgetRead(tabId); // 原地换了一篇，id 没变，上一篇的「已读完」记号不能留给新文章
       resetReadingContext();
       setTabs(nextTabs);
       setActiveId(tabId);
@@ -779,6 +801,13 @@ export function useStore() {
         },
       };
       setDict(next);
+      /* 老词没有原句（以前不存）。这回你又在文章里点了它，就把这一句补上——
+         下次复习它就能带着语境考了。已经有原句的不动：第一次遇见的那句最有记忆点。 */
+      const s0 = keepSent(sentence);
+      if (hit && !hit.sent && s0 && data.type === "en") {
+        setVocab((vs) => vs.map((v) => (v.key === hit.key && !v.sent
+          ? { ...v, sent: s0, from: (article && article.title) || "" } : v)));
+      }
       if (data.type === "en" || data.type === "zh") lastWordRef.current = next;
       if (data.type === "en") setWchat((w) => w.word === data.word
         ? { ...w, busy: false }
@@ -962,6 +991,13 @@ words 按相关度最多给 5 个；如果回答里没有值得收藏的词就�
 
   /* 小测错题词批量入库。存的是薄词条（只有一条释义），这没问题——
      isFullEntry 会挡住它被当成查词缓存用，下次点它仍会拉一份完整的。 */
+  /* 在当前这一章里找出带这个词的那一句 */
+  function sentFor(word) {
+    const probe = { data: { type: "en", word }, surface: word };
+    const s = flatSents.map((x) => x.t).find((t) => keepSent(t) && spotIn(t, probe));
+    return s ? { sent: s, from: (article && article.title) || "" } : {};
+  }
+
   function saveMissedWords(list) {
     const fresh = (list || []).filter((m) => m.w && !savedKeys.has(m.w.toLowerCase()));
     if (!fresh.length) { showToast("这些词都已经在生词本里了"); return; }
@@ -973,11 +1009,13 @@ words 按相关度最多给 5 个；如果回答里没有值得收藏的词就�
           context_cn: null, senses: [{ pos: "", cn: m.cn || "" }], examples: [],
         },
         surface: m.w, savedAt: Date.now(), meet: 1,
-        rv: { due: Date.now(), iv: 0, streak: 0 },
+        // 题是照着这一章出的，把文中带这个词的那句一起存下，复习时带语境考
+        ...sentFor(m.w),
+        rv: { due: firstDue(), iv: 0, streak: 0 },
       })),
       ...v,
     ]);
-    showToast(`已收 ${fresh.length} 个错题词，今天就能复习`);
+    showToast(`已收 ${fresh.length} 个错题词，明天开始温`);
   }
 
   function addChatWord(cw) {
@@ -992,7 +1030,7 @@ words 按相关度最多给 5 个；如果回答里没有值得收藏的词就�
           context_cn: null, senses: [{ pos: "", cn: cw.cn || "" }], examples: [],
         },
         surface: cw.w, savedAt: Date.now(), meet: 1,
-        rv: { due: Date.now(), iv: 0, streak: 0 },
+        rv: { due: firstDue(), iv: 0, streak: 0 },
       },
       ...v,
     ]);
@@ -1060,7 +1098,9 @@ ${historyLine ? `目前的对话：\n${historyLine}` : "对话还没开始，请
           return t && used.has(t) ? { ...v, meet: (v.meet || 1) + 1 } : v;
         }));
       }
-      bumpStat("t");
+      /* 只数你自己说的句子。以前 AI 每回一句就记一次，连开场白也记——
+         点开一个场景、你一个字没打，「说」这格就写上了。 */
+      if (said) bumpStat("t");
     } catch (e) {
       setTalk((s) => ({ ...s, busy: false }));
       showToast(errText(e, providerId));
@@ -1170,22 +1210,28 @@ ${curText}
       setQuiz({ ...quiz, i: quiz.i + 1, sel: null });
       return;
     }
-    // 结束：记统计 + 自动调难
+    /* 结束：记统计 + 给出换档建议。只建议，不替你改——三道题（其中两道还是
+       考你刚查过的词）证据太少，一次全对就自动升档，下一篇可能直接读不动。
+       改不改由结果页上的按钮决定（applyLevel）。总则第七条：证据不足就提示。 */
     bumpStat("q");
     const idx = LEVELS.findIndex((l) => l.id === level);
     let adj = null;
     if (quiz.score === quiz.qs.length && idx < LEVELS.length - 1) {
       const nl = LEVELS[idx + 1];
-      setLevel(nl.id);
-      setStats((s) => ({ ...s, lv: nl.id }));
-      adj = { dir: "up", label: nl.label, tag: nl.tag };
+      adj = { dir: "up", to: nl.id, label: nl.label, tag: nl.tag };
     } else if (quiz.score <= 1 && idx > 0) {
       const nl = LEVELS[idx - 1];
-      setLevel(nl.id);
-      setStats((s) => ({ ...s, lv: nl.id }));
-      adj = { dir: "down", label: nl.label, tag: nl.tag };
+      adj = { dir: "down", to: nl.id, label: nl.label, tag: nl.tag };
     }
     setQuiz({ st: "done", qs: quiz.qs, score: quiz.score, adj, missed: quiz.missed || [] });
+  }
+  /* 换难度：下一篇生效，正在读的这篇不动 */
+  function applyLevel(id) {
+    const nl = LEVELS.find((l) => l.id === id);
+    if (!nl) return;
+    setLevel(nl.id);
+    setStats((s) => ({ ...s, lv: nl.id }));
+    showToast(`难度已调到「${nl.label}」，下一篇生效`);
   }
 
   /* ---- 导入材料 ---- */
@@ -1514,12 +1560,21 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
   function startReview() {
     if (!dueList.length) { showToast("今天没有到期的词，先去读一篇吧"); return; }
     hardStop();
-    setRev({ queue: dueList.map((v) => v.key), i: 0, flip: false, ok: 0, ng: 0, sk: 0 });
+    /* 拖得最久的排最前，一轮最多 REVIEW_BATCH 个。以前是「所有到期的、
+       新收的在前」：停几天回来就是一大摞，而且最该温的反而压在最后。 */
+    const queue = [...dueList]
+      .sort((a, b) => rvOf(a).due - rvOf(b).due)
+      .slice(0, REVIEW_BATCH)
+      .map((v) => v.key);
+    setRev({ queue, i: 0, flip: false, ok: 0, ng: 0, sk: 0 });
     setView("review");
   }
   function answerReview(good) {
     if (!rev) return;
     const key = rev.queue[rev.i];
+    /* 这一张答完，到期的就清空了——记一笔「今天温完了」。答对答错都会把
+       这个词的到期时间往后推，所以只要看别的词里还有没有到期的。 */
+    if (!vocab.some((v) => v.key !== key && rvOf(v).due <= Date.now())) bumpStat("rd");
     setVocab((vs) =>
       vs.map((v) => {
         if (v.key !== key) return v;
@@ -1549,11 +1604,13 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
 
   /* ---- 生词本 ---- */
   const savedKeys = useMemo(() => new Set(vocab.map((v) => v.key)), [vocab]);
+  /* 文中哪些词算「你存过的」。连变形一起认：存了 erode，下一篇里的 eroded、
+     eroding 也标出来——以前只认一模一样的拼写，换个时态就像没见过。 */
   const savedSurfaces = useMemo(() => {
     const s = new Set();
     vocab.forEach((v) => {
       if (v.data?.type === "en") {
-        if (v.data.word) s.add(v.data.word.toLowerCase());
+        for (const f of formsOf(v.data.word)) s.add(f);
         if (v.surface) s.add(v.surface.toLowerCase());
       }
     });
@@ -1576,15 +1633,20 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
       showToast("已从生词本移除");
       return;
     }
+    /* 连同你遇见它的那句话一起存。复习时最好的线索不是释义，是「我在哪儿见过它」；
+       有了原句，复习卡才能带着语境考、才能挖空让你填。sent / from 是新加的字段，
+       老词没有，一律当空处理。只有在文章里点的词才有（输入框里查的没有句子）。 */
+    const s0 = keepSent(dict.sent);
     setVocab((v) => [
       {
         // surface 记的是「你当时看到的那个形态」，拼错的那个不配留下来
         key, data: dict.data, surface: dict.data.typo || dict.term, savedAt: Date.now(),
-        meet: 1, rv: { due: Date.now(), iv: 0, streak: 0 },
+        ...(s0 ? { sent: s0, from: (article && article.title) || "" } : {}),
+        meet: 1, rv: { due: firstDue(), iv: 0, streak: 0 },
       },
       ...v,
     ]);
-    showToast("已加入生词本，今天就能复习它");
+    showToast("已收进生词本，明天开始温它");
   }
   function removeWord(key) {
     setVocab((v) => v.filter((x) => x.key !== key));
@@ -1702,8 +1764,68 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
     showToast("已清空生词本");
   }
 
+  /* ---- 完整备份 / 恢复 ----
+     备份直接从内存里的状态装，不从 localStorage 读：万一哪次存储写满没写进去，
+     localStorage 里是旧的，内存里才是你眼前看到的这一份。 */
+  function exportBackup() {
+    const pack = {
+      app: BACKUP_MARK, v: 1, at: Date.now(),
+      data: {
+        [VOCAB_KEY]: vocab,
+        [STATS_KEY]: stats,
+        [SEEN_KEY]: seenRef.current,
+        [HISTORY_KEY]: history,
+        [TABS_KEY]: { tabs, activeId },
+        [PREFS_KEY]: prefs,
+      },
+    };
+    try {
+      const blob = new Blob([JSON.stringify(pack)], { type: "application/json" });
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = u;
+      a.download = `007学英语-备份-${dateStr()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(u), 2000);
+      setPrefs((p) => ({ ...p, backupAt: Date.now() }));
+      showToast("备份文件已下载，挪到网盘或别的硬盘上才算数");
+    } catch (e) {
+      showToast("备份文件没能生成，再试一次");
+    }
+  }
+  /* 恢复分两步：先读文件、告诉你里面有什么，你确认了才覆盖。
+     覆盖是整份替换（回到备份那一刻），不做合并——合并出来的进度谁也说不清。 */
+  const [restore, setRestore] = useState(null); // {data, at, words, days, arts} | {err}
+  async function pickBackupFile(e) {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    try {
+      setRestore(parseBackup(await f.text()));
+    } catch (err) {
+      setRestore({
+        err: err.message === "broken"
+          ? "这份备份里的数据不完整，没有恢复。换一份更早的备份试试"
+          : "这不是「下载完整备份」生成的文件。生词本的 Markdown 请到生词本页导入",
+      });
+    }
+  }
+  function confirmRestore() {
+    if (!restore || !restore.data) return;
+    hardStop();
+    if (!applyBackup(restore.data)) {
+      setRestore({ err: "浏览器存储放不下这份备份，没有恢复，现有数据原样未动" });
+      return;
+    }
+    // 写完直接重新打开页面，让全部状态从存储里重读一遍，比逐项塞回内存可靠
+    window.location.reload();
+  }
+
   /* 交给界面用的全部东西。界面要用到新的状态或动作时，把名字加进这张清单。 */
   return {
+    applyLevel, chRead, confirmRestore, exportBackup, markRead, pickBackupFile, restore, setRestore,
     activeId, addChatWord, advanceShadow, analyzeSentence, answerReview, apiKey, appStyle, article,
     askWord, backToWord, books, booksBusy, booksErr, cachedBooks, chapters, chIdx, chipCat, chips,
     clearSetupKey, clearVocab, clickedRef, clicks, closeDict, closeTab, confirmClear, copyVocab,

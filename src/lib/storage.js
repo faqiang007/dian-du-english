@@ -130,3 +130,56 @@ export function saveSeen(obj) {
   sSet(SEEN_KEY, o);
   return o;
 }
+
+/* ---- 完整备份 ----
+   以前唯一的备份是把生词本导出成 Markdown：只带词和释义，复习进度、足迹、
+   读过的文章全不带。清一次浏览器数据，几个月的积累就归零了。
+   这里把「学习数据」整份装进一个 JSON 文件。刻意不装两样东西：
+     API Key —— 备份文件会被拷来拷去、传网盘，密钥不该跟着走；
+     各种缓存（词典、教材正文、教材清单）—— 丢了只是重取一次，不是损失。 */
+export const BACKUP_MARK = "007-english-backup";
+export const BACKUP_KEYS = [VOCAB_KEY, STATS_KEY, SEEN_KEY, HISTORY_KEY, TABS_KEY, PREFS_KEY];
+
+/* 读一份备份文件的文字。返回 { data, at, words, days, arts }；不是备份就抛错。 */
+export function parseBackup(text) {
+  let j = null;
+  try { j = JSON.parse(text); } catch (e) { throw new Error("notjson"); }
+  if (!j || j.app !== BACKUP_MARK || !j.data || typeof j.data !== "object") throw new Error("notbackup");
+  const d = {};
+  for (const k of BACKUP_KEYS) if (j.data[k] != null) d[k] = j.data[k];
+  const v = d[VOCAB_KEY];
+  if (v != null && !(Array.isArray(v) && v.every((x) => x && typeof x.key === "string" && x.data))) throw new Error("broken");
+  if (d[TABS_KEY] != null && !Array.isArray(d[TABS_KEY].tabs)) throw new Error("broken");
+  if (d[HISTORY_KEY] != null && !Array.isArray(d[HISTORY_KEY])) throw new Error("broken");
+  if (d[STATS_KEY] != null && typeof d[STATS_KEY] !== "object") throw new Error("broken");
+  if (!Object.keys(d).length) throw new Error("broken");
+  return {
+    data: d,
+    at: Number(j.at) || 0,
+    words: Array.isArray(v) ? v.length : 0,
+    days: Object.keys((d[STATS_KEY] && d[STATS_KEY].log) || {}).length,
+    arts: ((d[TABS_KEY] && d[TABS_KEY].tabs) || []).length + (d[HISTORY_KEY] || []).length,
+  };
+}
+
+/* 把备份写回去。要么全写进去，要么一个都不动：中途哪一项写不下
+   （存储满了），就把已经写的几项退回原样——半新半旧比不恢复更糟。 */
+export function applyBackup(data) {
+  const old = {};
+  for (const k of BACKUP_KEYS) old[k] = localStorage.getItem(k);
+  try {
+    for (const k of BACKUP_KEYS) {
+      if (data[k] != null) localStorage.setItem(k, JSON.stringify(data[k]));
+      else localStorage.removeItem(k);
+    }
+    return true;
+  } catch (e) {
+    for (const k of BACKUP_KEYS) {
+      try {
+        if (old[k] == null) localStorage.removeItem(k);
+        else localStorage.setItem(k, old[k]);
+      } catch (e2) {}
+    }
+    return false;
+  }
+}

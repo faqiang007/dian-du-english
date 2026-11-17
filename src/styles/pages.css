@@ -42,6 +42,18 @@
 .rv-ng:hover{background:var(--red-wash)}
 .rv-ok{background:var(--ink);color:var(--paper);border-color:var(--ink)}
 .rv-ok:hover{opacity:.86}
+/* 带原句的卡：原句、挖掉的词、中文提示、填词的那一格 */
+.rv-sent{margin-top:22px;font-family:var(--read-serif);font-size:19px;line-height:1.75;color:var(--ink2);text-align:left}
+.rv-sent b{font-weight:400;color:var(--red)}
+.rv-sent:first-child{margin-top:0;font-size:21px;color:var(--ink)}
+.rv-gap{display:inline-block;width:5.5em;height:1.1em;vertical-align:-.18em;border-bottom:2px solid var(--red)}
+.rv-cue{margin-top:16px;font-size:15px;color:var(--ink2);text-align:left}
+.rv-in{display:block;width:100%;margin-top:22px;padding:8px 2px;border:none;border-bottom:1.5px solid var(--ink);outline:none;background:none;
+  font-family:var(--display);font-size:30px;font-weight:700;text-align:center;color:var(--ink)}
+.rv-in::placeholder{font-family:var(--sans);font-size:15px;font-weight:400;color:var(--mut)}
+.rv-mark{margin-top:14px;font-size:14px;font-weight:600;color:var(--red)}
+.rv-mark.ok{color:var(--ink)}
+.rv-mark s{font-family:var(--read-serif);font-weight:400}
 
 /* ---- 情景对话 ---- */
 .scenes{margin:22px 0 16px;border-top:1px solid var(--line2)}

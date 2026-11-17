@@ -1,8 +1,10 @@
 /* 温：复习到期的词。规矩是「先回想、再对答案」——
-   正面只有写在四线格上的那个词，翻过来才有释义，翻面之后只能回答记没记住。 */
+   正面不给释义，翻过来才有，翻面之后只能回答记没记住。
+   有原句的词带着原句考；连对两次以后改成原句挖空、把词填回去（见下面的 Card）。 */
 
-import { Check, ChevronLeft, ChevronRight, RotateCcw, Volume2, X } from "lucide-react";
-import { vbWord } from "../lib/vocab.js";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, RotateCcw, Volume2 } from "lucide-react";
+import { CLOZE_FROM, REVIEW_BATCH, formsOf, rvOf, spotIn, vbWord } from "../lib/vocab.js";
 import { Boldify } from "../ui/Boldify.jsx";
 
 export function WarmView({ app }) {
@@ -62,8 +64,6 @@ export function WarmView({ app }) {
     );
   }
 
-  const d = v.data;
-  const en = d.type === "en";
   return (
     <div className="hall wide">
       <div className="warm-top">
@@ -71,60 +71,140 @@ export function WarmView({ app }) {
         <span className="mut">{rev.i + 1} / {rev.queue.length}</span>
       </div>
       <div className="prog"><i style={{ width: `${(rev.i / rev.queue.length) * 100}%` }} /></div>
+      {/* key 换了整张卡重来：填了一半的字、焦点，都不带到下一张 */}
+      <Card key={key + ":" + rev.i} v={v} flip={rev.flip} speak={speak}
+        onFlip={() => setRev((x) => ({ ...x, flip: true }))}
+        onAnswer={answerReview} onSkip={skipReview} />
+    </div>
+  );
+}
 
-      <div className="card-flip">
-        <div className={en ? "rv-word" : "rv-word zh"}>
-          {en ? <span className="four">{d.word}</span> : d.input}
-        </div>
-        {en && (
-          <button className="ph" onClick={() => speak(d.word, "en-US")}>
-            {d.phonetic_us || ""} <Volume2 size={13} />
-          </button>
-        )}
+/* ---------- 一张卡 ----------
+   三种考法，由这个词自己的情况决定：
+     认（带原句）  有原句、还没连对两次：看词和它所在的那句话，想意思。
+     写（挖空）    有原句、已经连对两次：原句里把它挖掉，给中文义，把词填回去。
+                   认得出不等于想得起，先认后写，写得出才慢慢「写黑」。
+     认（只有词）  老词、输入框里查的词没有原句，照旧只给词。
+   键盘：空格/回车翻面；翻面后 ← 或 1 还不熟，→ 或 2 记住了。 */
 
-        {rev.flip ? (
-          <div className="rv-back">
-            {en ? (
-              <>
-                <ol className="senses tight">
-                  {(d.senses || []).slice(0, 3).map((s, i) => <li key={i}><i>{s.pos}</i><span>{s.cn}</span></li>)}
-                </ol>
-                {/* 只放在翻面之后。放正面等于直接把答案给出去了。 */}
-                {d.tech_cn && <div className="ctx tech"><small>计算机里</small>{d.tech_cn}</div>}
-                {d.examples?.[0] && (
-                  <p className="exline">
-                    <Boldify text={d.examples[0].en} word={d.word} />
-                    <small> — {d.examples[0].cn}</small>
-                  </p>
-                )}
-              </>
-            ) : (
-              (d.translations || []).map((t, i) => (
-                <div className="tr-top" key={i}>
-                  <b>{t.en}</b>
-                  {t.phonetic_us && <span className="tr-ph">{t.phonetic_us}</span>}
-                  <button className="say" onClick={() => speak(t.en, "en-US")} aria-label="发音">
-                    <Volume2 size={12} />
-                  </button>
-                </div>
-              ))
-            )}
-            <div className="rv-btns">
-              <button className="rv-ng" onClick={() => answerReview(false)}><X size={16} /> 还不熟</button>
-              <button className="rv-ok" onClick={() => answerReview(true)}><Check size={16} /> 记住了</button>
-            </div>
+function Card({ v, flip, speak, onFlip, onAnswer, onSkip }) {
+  const d = v.data;
+  const en = d.type === "en";
+  const sent = en ? v.sent || "" : "";
+  const spot = useMemo(() => (sent ? spotIn(sent, v) : null), [sent, v]);
+  const cloze = !!spot && rvOf(v).streak >= CLOZE_FROM;
+  const [typed, setTyped] = useState("");
+
+  // 填句子里那个形态、原形、别的时态，都算对——考的是想不想得起这个词，不是语法
+  const t = typed.trim().toLowerCase();
+  const right = cloze && !!t && (t === spot.text.toLowerCase() || formsOf(d.word).has(t));
+
+  useEffect(() => {
+    const key = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName || "");
+      if (!flip) {
+        if (!typing && (e.key === " " || e.key === "Enter")) { e.preventDefault(); onFlip(); }
+        return;
+      }
+      if (typing) return;
+      if (e.key === "ArrowLeft" || e.key === "1") { e.preventDefault(); onAnswer(false); }
+      else if (e.key === "ArrowRight" || e.key === "2") { e.preventDefault(); onAnswer(true); }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [flip, onFlip, onAnswer]);
+
+  /* 原句。gap=true 时把那个词换成一条横线（长度固定，不泄露词有多长） */
+  const line = (gap) => spot ? (
+    <p className="rv-sent">
+      {sent.slice(0, spot.start)}
+      {gap ? <span className="rv-gap" aria-label="挖掉的词" /> : <b>{spot.text}</b>}
+      {sent.slice(spot.end)}
+    </p>
+  ) : sent ? <p className="rv-sent">{sent}</p> : null;
+
+  const first = (d.senses || [])[0];
+
+  return (
+    <div className="card-flip">
+      {/* ---- 正面 ---- */}
+      {cloze && !flip ? (
+        <>
+          {line(true)}
+          {first && <p className="rv-cue">{first.pos ? first.pos + " " : ""}{first.cn}</p>}
+          <input
+            className="rv-in" autoFocus value={typed} spellCheck={false} autoCapitalize="off" autoComplete="off"
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); onFlip(); } }}
+            placeholder="把这个词填回去" aria-label="把挖掉的词填回去"
+          />
+        </>
+      ) : (
+        <>
+          <div className={en ? "rv-word" : "rv-word zh"}>
+            {en ? <span className="four">{d.word}</span> : d.input}
           </div>
-        ) : (
-          <>
-            <button className="rv-flip" onClick={() => setRev((x) => ({ ...x, flip: true }))}>
-              想好意思了？点开看释义
+          {en && (
+            <button className="ph" onClick={() => speak(d.word, "en-US")}>
+              {d.phonetic_us || ""} <Volume2 size={13} />
             </button>
-            {/* 只在正面给这个出口。翻面后已经看到答案，此时该给的是判断，
-                再留一个跳过只会让人逃避判断，复习质量反而下降。 */}
-            <button className="link quiet rv-skip" onClick={skipReview}>这个词先跳过</button>
-          </>
-        )}
-      </div>
+          )}
+          {/* 写对写错，翻面后第一眼就该看到 */}
+          {cloze && flip && (
+            <p className={right ? "rv-mark ok" : "rv-mark"}>
+              {right ? "写对了" : t ? <>你写的是 <s>{typed.trim()}</s></> : "没写出来"}
+            </p>
+          )}
+          {line(false)}
+        </>
+      )}
+
+      {flip ? (
+        <div className="rv-back">
+          {en ? (
+            <>
+              {/* 存词那一刻查到的「它在这句里的意思」，比泛泛的释义更对得上这句话 */}
+              {sent && d.context_cn && <div className="ctx"><small>在这句话里</small>{d.context_cn}</div>}
+              <ol className="senses tight">
+                {(d.senses || []).slice(0, 3).map((s, i) => <li key={i}><i>{s.pos}</i><span>{s.cn}</span></li>)}
+              </ol>
+              {/* 只放在翻面之后。放正面等于直接把答案给出去了。 */}
+              {d.tech_cn && <div className="ctx tech"><small>计算机里</small>{d.tech_cn}</div>}
+              {!sent && d.examples?.[0] && (
+                <p className="exline">
+                  <Boldify text={d.examples[0].en} word={d.word} />
+                  <small> — {d.examples[0].cn}</small>
+                </p>
+              )}
+              {sent && v.from && <p className="hint">出自《{v.from}》</p>}
+            </>
+          ) : (
+            (d.translations || []).map((t2, i) => (
+              <div className="tr-top" key={i}>
+                <b>{t2.en}</b>
+                {t2.phonetic_us && <span className="tr-ph">{t2.phonetic_us}</span>}
+                <button className="say" onClick={() => speak(t2.en, "en-US")} aria-label="发音">
+                  <Volume2 size={12} />
+                </button>
+              </div>
+            ))
+          )}
+          <div className="rv-btns">
+            <button className="rv-ng" onClick={() => onAnswer(false)} title="← 或 1"><ArrowLeft size={15} /> 还不熟</button>
+            <button className="rv-ok" onClick={() => onAnswer(true)} title="→ 或 2">记住了 <ArrowRight size={15} /></button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <button className="rv-flip" onClick={onFlip}>
+            {cloze ? "对答案" : sent ? "想好它在这句里的意思了？点开看释义" : "想好意思了？点开看释义"}
+          </button>
+          {/* 只在正面给这个出口。翻面后已经看到答案，此时该给的是判断，
+              再留一个跳过只会让人逃避判断，复习质量反而下降。 */}
+          <button className="link quiet rv-skip" onClick={onSkip}>这个词先跳过</button>
+        </>
+      )}
     </div>
   );
 }
@@ -139,7 +219,10 @@ function Lobby({ app }) {
       {n > 0 ? (
         <>
           <h1 className="kai-h">{n} 个词到期了</h1>
-          <p className="page-sub">一次一张卡：先自己想，再翻过来对。记住的，下次隔得更久；不熟的，12 小时后再来。</p>
+          <p className="page-sub">
+            一次一张卡：先自己想，再翻过来对。记住的，下次隔得更久；不熟的，12 小时后再来。
+            {n > REVIEW_BATCH && <> 这一轮先温拖得最久的 {REVIEW_BATCH} 个。</>}
+          </p>
           <div className="warm-due">
             {dueList.slice(0, 14).map((v) => <span key={v.key}>{vbWord(v.data)}</span>)}
             {n > 14 && <span>… 还有 {n - 14} 个</span>}

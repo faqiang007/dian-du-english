@@ -93,10 +93,101 @@ export function validQuizQuestions(qs) {
 /* 复习进度：没有记录的旧词视为"到期" */
 export const rvOf = (v) => v.rv || { due: v.savedAt || 0, iv: 0, streak: 0 };
 
-/* 连对 3 次即视为已掌握。这个数才是学习的收获——「生词总数」只增不减，
-   衡量的是欠债，越努力看着越吓人；界面上得让人看见自己拿下了多少。 */
-export const MASTER_STREAK = 3;
-export const isMastered = (v) => rvOf(v).streak >= MASTER_STREAK;
+/* 间隔拉到 21 天以上才算已掌握。间隔序列是 1 → 3 → 8 → 20 → 50 → 60 天，
+   所以这等于「隔了 20 天再考还记得」。以前是连对 3 次就算，而新词当天就能温，
+   最快第 5 天就「写黑」了——那只是短期记忆，文中却从此不再标红。
+   这个数才是学习的收获——「生词总数」只增不减，衡量的是欠债，越努力看着
+   越吓人；界面上得让人看见自己拿下了多少，但也不能夸大。 */
+export const MASTER_DAYS = 21;
+export const isMastered = (v) => rvOf(v).iv >= MASTER_DAYS;
+
+/* 一轮最多温几个。停了一周回来一口气摆出 80 张卡，人会直接关掉页面；
+   先温最该温的 20 个，做完想继续再来一轮。 */
+export const REVIEW_BATCH = 20;
+
+/* 一张卡什么时候从「认」升到「写」：连对到这个数之后，有原句的词改成
+   原句挖空、让你把词填回去。先认得、再写得出——描红本的顺序。 */
+export const CLOZE_FROM = 2;
+
+/* 新词第一次到期的时间：明天零点。当天就温等于白送一次「记住了」——
+   刚查完的词谁都记得，那一次证明不了任何事。 */
+export function firstDue() {
+  const d = new Date();
+  d.setHours(24, 0, 0, 0);
+  return d.getTime();
+}
+
+/* 一个词常见的变形：复数、三单、过去式、进行时。只按拼写规则推，不查表，
+   所以不规则变化（go → went）推不出来——那种靠 surface（你当时点的形态）兜。
+   用途有两处：文中把 eroded 也认成你存过的 erode；复习卡在原句里找到该挖哪个词。
+   偶尔会多认（存了 even，evening 也会跟着红），词少、可接受。 */
+export function formsOf(word) {
+  const w = String(word || "").toLowerCase().trim();
+  const out = new Set(w ? [w] : []);
+  if (!/^[a-z]{3,}$/.test(w)) return out; // 词组、带连字符的、太短的，只认原样
+  const vowel = (c) => "aeiou".includes(c);
+  const last = w.slice(-1);
+  const prev = w.slice(-2, -1);
+  const stem = w.slice(0, -1);
+
+  out.add(w + "s");
+  if (/(s|x|z|ch|sh|o)$/.test(w)) out.add(w + "es");
+
+  if (last === "y" && !vowel(prev)) {
+    out.add(stem + "ies"); out.add(stem + "ied"); out.add(w + "ing");
+  } else if (w.endsWith("ie")) {
+    out.add(w + "d"); out.add(w.slice(0, -2) + "ying");
+  } else if (w.endsWith("ee")) {
+    if (w.length > 3) out.add(w + "d");   // see → seed、fee → feed 是别的词，不认
+    out.add(w + "ing");
+  } else if (last === "e") {
+    out.add(w + "d"); out.add(stem + "ing");
+  } else {
+    out.add(w + "ed"); out.add(w + "ing");
+    // 辅音-元音-辅音结尾要双写：stop → stopped
+    if (!vowel(last) && vowel(prev) && !vowel(w.slice(-3, -2)) && !"wxy".includes(last)) {
+      out.add(w + last + "ed"); out.add(w + last + "ing");
+    }
+  }
+  return out;
+}
+
+/* 在原句里找到这个词出现的位置。先找你当时点的那个形态，再找各种变形。
+   找不到返回 null——复习卡就不挖空，照旧按整词考。 */
+export function spotIn(sent, v) {
+  const d = v && v.data;
+  const s = String(sent || "");
+  if (!s || !d || d.type !== "en") return null;
+  const low = s.toLowerCase();
+  const whole = (p) => {
+    const t = String(p || "").toLowerCase().trim();
+    if (!t) return null;
+    let from = 0;
+    for (;;) {
+      const i = low.indexOf(t, from);
+      if (i < 0) return null;
+      const before = low[i - 1], after = low[i + t.length];
+      if (!/[a-z]/.test(before || "") && !/[a-z]/.test(after || "")) {
+        return { start: i, end: i + t.length, text: s.slice(i, i + t.length) };
+      }
+      from = i + 1;
+    }
+  };
+  const hit = whole(v.surface) || whole(d.word);
+  if (hit) return hit;
+  for (const f of formsOf(d.word)) {
+    const h = whole(f);
+    if (h) return h;
+  }
+  return null;
+}
+
+/* 原句太长就不存：存下来也当不了复习卡，还白占生词本的空间。 */
+export const SENT_MAX = 400;
+export function keepSent(s) {
+  const t = String(s || "").trim();
+  return t && t.length <= SENT_MAX ? t : "";
+}
 
 /* 能织进文章的英文表达：英文词条取词本身，中文词条取第一个英文译词。
    生词本只存这两类（句子 type:"sent" 不入库），别的一律返回空跳过。 */

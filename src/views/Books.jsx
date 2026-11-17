@@ -18,7 +18,8 @@ export function BooksView({ app }) {
     const kw = q.trim().toLowerCase();
     return all
       .filter((x) => x.lv === lv)
-      .filter((x) => !kw || (x.title + " " + x.book + " " + x.author).toLowerCase().includes(kw))
+      // kind 是主题（科技、健康、环境……）或体裁（寓言、童话），输「健康」就能把这一组都筛出来
+      .filter((x) => !kw || (x.title + " " + x.book + " " + x.author + " " + (x.kind || "")).toLowerCase().includes(kw))
       .sort((x, y) => x.words - y.words);
   }, [all, lv, q]);
 
@@ -49,7 +50,7 @@ export function BooksView({ app }) {
         </div>
         <label className="search grow">
           <Search size={14} />
-          <input value={q} placeholder="按标题、作者、书名筛（不联网）" onChange={(e) => setQ(e.target.value)} />
+          <input value={q} placeholder="按标题或主题筛，如：健康、太空（不联网）" onChange={(e) => setQ(e.target.value)} />
         </label>
       </div>
       <p className="hint">{cur.tag} · {cur.spec}</p>

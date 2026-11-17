@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight, Languages, RotateCcw, Search, Settings, Turtle, X } from "lucide-react";
-import { FOUR, todayFour } from "../lib/day.js";
+import { SQUARES, todayMarks } from "../lib/day.js";
 import { DeskView } from "./Desk.jsx";
 import { DictPanel } from "./Dict.jsx";
 import { KeepView } from "./Keep.jsx";
@@ -32,7 +32,7 @@ function useNarrow() {
 export function Shell({ app }) {
   const {
     appStyle, view, article, homeMode, genLoading, dict, dictOpen, closeDict,
-    selTip, translateText, shadow, setShadow, flatSents, playShadow, advanceShadow, exitShadow, toast,
+    selTip, setSelTip, lookup, translateText, shadow, setShadow, flatSents, playShadow, advanceShadow, exitShadow, toast,
   } = app;
   const narrow = useNarrow();
   const [omni, setOmni] = useState(false);
@@ -93,14 +93,21 @@ export function Shell({ app }) {
         </div>
       )}
 
+      {/* 划了两到四个词：多半是个词组（carry out、in terms of），给「查词组」——
+          查出来的词条能收进生词本；只能翻译的话，这类搭配永远进不了本子。 */}
       {selTip && (
-        <button
-          className="seltip"
-          style={{ left: selTip.x, top: Math.max(8, selTip.y - 42) }}
-          onClick={() => translateText(selTip.text)}
-        >
-          <Languages size={13} /> 译
-        </button>
+        <div className="seltip"
+          /* 划的词贴着屏幕边时，气泡别跟着伸出去半截 */
+          style={{ left: `clamp(72px, ${Math.round(selTip.x)}px, calc(100vw - 72px))`, top: Math.max(8, selTip.y - 42) }}>
+          {selTip.kind === "phrase" && (
+            <button onClick={() => { const t = selTip; setSelTip(null); lookup(t.text, t.sent || undefined); }}>
+              <Search size={13} /> 查词组
+            </button>
+          )}
+          <button onClick={() => translateText(selTip.text)}>
+            <Languages size={13} /> 译
+          </button>
+        </div>
       )}
 
       {/* 跟读控制条 */}
@@ -134,11 +141,12 @@ export function Shell({ app }) {
 }
 
 /* ---------- 左边那列格子 ----------
-   温读测说四格的颜色就是今天的进度：红字是还没写的，黑字是写过的。 */
+   温读测三格的颜色就是今天的进度：红字是还没写的，黑字是写过的。
+   今、说、藏不算每天的格子，是普通的灰格。 */
 
 function Rail({ app, station, onOmni }) {
   const { go, setHomeMode, stats, dueList, streak, view } = app;
-  const { done } = todayFour(stats, dueList.length);
+  const { done } = todayMarks(stats, dueList.length);
   // 记住上次在「藏」里看的是哪一页，回来时还在那一页
   const keepRef = useRef("vocab");
   if (station === "藏") keepRef.current = view;
@@ -154,24 +162,25 @@ function Rail({ app, station, onOmni }) {
   const label = { 今: "今天", 温: "温故：复习到期的词", 读: "阅读", 测: "读后小测", 说: "开口：情景对话", 藏: "收藏：生词、教材、足迹" };
   const cell = (ch) => {
     const on = station === ch;
-    const written = FOUR.includes(ch) && done[ch];
+    const written = SQUARES.includes(ch) && done[ch];
     return (
       <button key={ch} className={"rail-b" + (on ? " on" : "")} onClick={goto[ch]}
         aria-label={label[ch]} aria-current={on ? "page" : undefined} title={label[ch]}>
-        <span className={"ge" + (written ? " done" : "") + (FOUR.includes(ch) ? "" : " plain")}>{ch}</span>
+        <span className={"ge" + (written ? " done" : "") + (SQUARES.includes(ch) ? "" : " plain")}>{ch}</span>
         {ch === "温" && dueList.length > 0 && <i className="rail-n">{dueList.length}</i>}
       </button>
     );
   };
 
   return (
-    <nav className="rail" aria-label="今日四格与导航">
+    <nav className="rail" aria-label="今日三格与导航">
       <button className="seal" onClick={goto.今} aria-label="007学英语 · 回到今天">007</button>
       <div className="rail-main">
         {cell("今")}
         <span className="rail-gap" />
-        {FOUR.map(cell)}
+        {SQUARES.map(cell)}
         <span className="rail-gap" />
+        {cell("说")}
         {cell("藏")}
       </div>
       <div className="rail-foot">

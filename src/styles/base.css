@@ -60,6 +60,7 @@ svg{flex:none}
 
 /* ---- 小标题、说明字 ---- */
 .lbl{font-size:11px;letter-spacing:.14em;color:var(--mut);font-weight:500}
+label.btn{cursor:pointer}
 .hint{font-size:12.5px;color:var(--mut);line-height:1.65}
 .hint b{color:var(--ink2);font-weight:600}
 

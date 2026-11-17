@@ -7,7 +7,7 @@ import { BookOpen, ChevronRight, ClipboardCheck, Loader2, Plus, RefreshCw } from
 export function QuizView({ app }) {
   const {
     article, quiz, startQuiz, pickOption, nextQuestion, saveMissedWords, savedKeys,
-    generateArticle, reTopicOf, setHomeMode, go, chapters, chIdx,
+    generateArticle, reTopicOf, setHomeMode, go, chapters, chIdx, level, applyLevel,
   } = app;
 
   /* 每道题对没对。store 里只记总分，这里自己记一份用来画三个格子。
@@ -39,7 +39,7 @@ export function QuizView({ app }) {
       <div className="hall">
         <span className="ge huge">测</span>
         <h1 className="kai-h">三道题，测一测刚读的</h1>
-        <p className="page-sub">{where}。全对自动升一档难度，答对不足两题降一档。</p>
+        <p className="page-sub">{where}。两道考词，一道考理解。</p>
         {quiz.st === "err" && <div className="callout bad">出题失败了，再试一次。</div>}
         <div className="hall-a">
           <button className="btn pri lg" onClick={startQuiz} disabled={quiz.st === "loading"}>
@@ -69,11 +69,21 @@ export function QuizView({ app }) {
       <div className="hall wide">
         {cells}
         <h1 className="kai-h">答对 {quiz.score} / {total}</h1>
-        {quiz.adj?.dir === "up" && (
-          <p className="page-sub">全对！难度已升到「{quiz.adj.label} · {quiz.adj.tag}」，下一篇生效。</p>
+        {/* 只建议、不替你改：三道题的证据不够硬。点了才换，下一篇生效。 */}
+        {quiz.adj && level !== quiz.adj.to && (
+          <div className="callout hi row">
+            <span>
+              {quiz.adj.dir === "up"
+                ? `全对。要不要升到「${quiz.adj.label} · ${quiz.adj.tag}」？`
+                : `这篇有点吃力。要不要先降到「${quiz.adj.label} · ${quiz.adj.tag}」？`}
+            </span>
+            <button className="btn sec sm" onClick={() => applyLevel(quiz.adj.to)}>
+              {quiz.adj.dir === "up" ? "升一档" : "降一档"}
+            </button>
+          </div>
         )}
-        {quiz.adj?.dir === "down" && (
-          <p className="page-sub">我们放缓一点，难度已调到「{quiz.adj.label} · {quiz.adj.tag}」，稳扎稳打。</p>
+        {quiz.adj && level === quiz.adj.to && (
+          <p className="page-sub">难度已调到「{quiz.adj.label} · {quiz.adj.tag}」，下一篇生效。</p>
         )}
         {!quiz.adj && <p className="page-sub">这个难度刚刚好，保持。</p>}
 
@@ -98,11 +108,7 @@ export function QuizView({ app }) {
 
         <div className="hall-a">
           <button className="btn sec lg" onClick={() => generateArticle(reTopicOf(article))}>
-            <RefreshCw size={15} /> 按新难度再来一篇
-          </button>
-          <button className="next-ge" onClick={() => go("talk")}>
-            <span className="ge">说</span>
-            <span><b>下一格：开口</b><small>把刚学的词用出来</small></span>
+            <RefreshCw size={15} /> 再来一篇
           </button>
         </div>
       </div>

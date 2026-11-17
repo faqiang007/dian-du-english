@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { LEVELS } from "../data/levels.js";
 import { hostOf, splitSentences } from "../lib/text.js";
-import { isMastered } from "../lib/vocab.js";
+import { formsOf, isMastered } from "../lib/vocab.js";
 
 export function ReaderView({ app, peek, onExpand }) {
   const {
@@ -20,15 +20,60 @@ export function ReaderView({ app, peek, onExpand }) {
     quiz, go, lvHint, setLvHint, clicks, clickedRef, setLevel, setStats, showToast, lvMenu, setLvMenu,
     curWords, curMins, chapters, chIdx, gotoCh, curText, curTrans,
     dict, dictOpen, savedSurfaces, wovenSet, vocab, flatSents, readIdx, lookup, setSelTip,
+    markRead, chRead,
   } = app;
   const box = useRef(null);
+  const recapRef = useRef(null);
+
+  /* 这一章算不算「读完了」：文末那一栏滚进了屏幕，而且从打开到现在的时间
+     够读完它——按每秒 8 个词算（一分钟 480 词，比谁读得都快），所以真读了的人
+     一定够，只有打开就拉到底的不够。够了才记词数、才算今天的「读」。 */
+  const openedAt = useRef(Date.now());
+  useEffect(() => { openedAt.current = Date.now(); }, [article?.id, chIdx, curText]);
+  useEffect(() => {
+    const el = recapRef.current;
+    if (!el || !article || chRead || genLoading || !curWords) return;
+    const need = Math.min(180, Math.max(8, curWords / 8)) * 1000;
+    let timer = null;
+    let seen = false;
+    const check = () => {
+      clearTimeout(timer);
+      if (!seen) return;
+      const left = need - (Date.now() - openedAt.current);
+      if (left <= 0) markRead();
+      else timer = setTimeout(check, left + 50);
+    };
+    const io = new IntersectionObserver((es) => { seen = es[es.length - 1].isIntersecting; check(); });
+    io.observe(el);
+    return () => { io.disconnect(); clearTimeout(timer); };
+  }, [article?.id, chIdx, curText, chRead, genLoading]);
+
+  /* 划词之后冒什么：两到四个英文词多半是词组，给「查词组」（查得到就能收藏）；
+     更长的是句子，只给「译」。sent 是它所在的那句话，查词组时当语境。 */
+  const tipFor = (minLen, needSpace) => {
+    try {
+      const sel = window.getSelection();
+      const t = sel ? sel.toString().trim() : "";
+      const phrase = /^[A-Za-z][A-Za-z'’-]*(\s+[A-Za-z'’-]+){1,3}$/.test(t);
+      const long = t.length >= minLen && (!needSpace || /\s/.test(t) || /[一-鿿]/.test(t));
+      if (!t || !(phrase || long)) { setSelTip(null); return; }
+      const r = sel.getRangeAt(0).getBoundingClientRect();
+      const node = sel.anchorNode && (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement);
+      const sen = node && node.closest ? node.closest(".sen") : null;
+      setSelTip({
+        x: r.left + r.width / 2, y: r.top, text: t,
+        kind: phrase ? "phrase" : "tr",
+        sent: phrase && sen ? sen.textContent.trim() : "",
+      });
+    } catch (e) { setSelTip(null); }
+  };
 
   /* 已经掌握的生词：文中不再标红。和 savedSurfaces 用同一套取词办法。 */
   const inkSet = useMemo(() => {
     const s = new Set();
     vocab.forEach((v) => {
       if (v.data?.type === "en" && isMastered(v)) {
-        if (v.data.word) s.add(v.data.word.toLowerCase());
+        for (const f of formsOf(v.data.word)) s.add(f);
         if (v.surface) s.add(v.surface.toLowerCase());
       }
     });
@@ -166,30 +211,8 @@ export function ReaderView({ app, peek, onExpand }) {
 
       {/* 划一段话 → 冒出「译」。鼠标和触屏的判定条件不一样，所以分开写。 */}
       <div
-        onMouseUp={() => {
-          setTimeout(() => {
-            try {
-              const sel = window.getSelection();
-              const t = sel ? sel.toString().trim() : "";
-              if (t && t.length >= 8 && (/\s/.test(t) || /[一-鿿]/.test(t))) {
-                const r = sel.getRangeAt(0).getBoundingClientRect();
-                setSelTip({ x: r.left + r.width / 2, y: r.top, text: t });
-              } else setSelTip(null);
-            } catch (e) { setSelTip(null); }
-          }, 0);
-        }}
-        onTouchEnd={() => {
-          setTimeout(() => {
-            try {
-              const sel = window.getSelection();
-              const t = sel ? sel.toString().trim() : "";
-              if (t && t.length >= 8) {
-                const r = sel.getRangeAt(0).getBoundingClientRect();
-                setSelTip({ x: r.left + r.width / 2, y: r.top, text: t });
-              } else setSelTip(null);
-            } catch (e) { setSelTip(null); }
-          }, 60);
-        }}
+        onMouseUp={() => setTimeout(() => tipFor(8, true), 0)}
+        onTouchEnd={() => setTimeout(() => tipFor(8, false), 60)}
       >
         <ArticleBody
           content={curText}
@@ -211,7 +234,8 @@ export function ReaderView({ app, peek, onExpand }) {
       {peek && <Peek app={app} box={box} onExpand={onExpand} />}
 
       {/* 读到这儿：这一章查过哪些词，然后去哪一格 */}
-      <section className="recap">
+      <section className="recap" ref={recapRef}>
+        {chRead && <p className="recap-done"><Check size={14} /> 这一章读完了，记 {curWords} 词</p>}
         {looked.length > 0 && (
           <>
             <div className="lbl">这一章你查过 {looked.length} 个词</div>
@@ -231,10 +255,6 @@ export function ReaderView({ app, peek, onExpand }) {
           <button className="next-ge" onClick={() => go("quiz")}>
             <span className="ge">测</span>
             <span><b>{quiz.st === "on" ? "接着答题" : quiz.st === "done" ? "看小测结果" : "读完了，去测一测"}</b><small>3 道题，优先考你查过的词</small></span>
-          </button>
-          <button className="next-ge" onClick={() => go("talk")}>
-            <span className="ge">说</span>
-            <span><b>开口练一练</b><small>挑个场景，把刚学的词用出来</small></span>
           </button>
         </div>
       </section>
