@@ -398,6 +398,20 @@ export function useStore() {
     });
   }
 
+  /* 一次 AI 调用失败了，该跟用户说什么。
+     这个应用里每一次「失败」其实分两种，混在一起报会把排查方向带偏：
+       请求失败（KEY / CREDIT / RATE / NET / ACCESS…）——服务商那一层就挂了。
+           Key 失效、余额不足时，「重试一下」永远不可能成功，得把服务商的原话
+           照实说出来，让人知道该去做什么。
+       返回内容不合格（bad：模型没按 JSON 答）——真是一次性的，重试有意义。
+     以前各处的 catch 一律写「重试一下」，于是余额不足被报成"网络抽风"，
+     用户会一直点，一直失败，却永远不知道要充值。 */
+  function aiFailText(e, providerId, retryHint) {
+    const code = e && e.message;
+    if (!code || code === "bad") return retryHint;
+    return errText(e, providerId);
+  }
+
   /* 「读完一章」的记账。只有真读到章末才记（界面那边还会卡一个最短停留时间），
      记的是这一章的词数——「今天读了多少词」是阅读这件事唯一老实的进度。
      以前打开一篇文章就算读了，每日格子里的「读」等于白送。
@@ -1078,9 +1092,11 @@ words 按相关度最多给 5 个；如果回答里没有值得收藏的词就�
       }));
     } catch (e) {
       if (request !== wordChatReqRef.current) return;
+      // 以前一律回「这条没答上来，换个问法再试试」——余额不足时换个问法也没用，
+      // 而且这句话看起来像模型的回答，用户根本不会想到是账户的问题。
       setWchat((w) => ({
         ...w, busy: false,
-        msgs: [...w.msgs, { role: "a", t: "这条没答上来，换个问法再试试。", words: [] }],
+        msgs: [...w.msgs, { role: "a", t: aiFailText(e, providerId, "这条没答上来（模型这次没按格式返回），换个问法再试试。"), words: [] }],
       }));
     }
   }
@@ -1284,7 +1300,11 @@ ${curText}
       const qs = data.questions;
       setQuiz({ st: "on", qs, i: 0, sel: null, score: 0, missed: [], marks: [] });
     } catch (e) {
-      if (request === quizReqRef.current) setQuiz({ st: "err" });
+      /* 「出题失败了，再试一次」在 Key 失效 / 余额不足时是死循环。
+         把真实原因存进出错状态，界面照实显示；只有返回内容不合格才叫人重试。 */
+      if (request === quizReqRef.current) {
+        setQuiz({ st: "err", errMsg: aiFailText(e, providerId, "出题失败了（模型这次没按格式返回），再试一次。") });
+      }
     }
   }
   /* 答对答错的三个格子在 store 里记（marks），不放在界面里。
@@ -1740,7 +1760,9 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join("\n\n")}
       setTabs(nextTabs);
       setShowTrans(true);
     } catch (e) {
-      if (request === transReqRef.current) showToast("翻译失败了，再点一次重试");
+      // 「翻译失败了，再点一次重试」在余额不足时是死循环：点一百次也一样。
+      // 交给 aiFailText 分清楚——内容不合格才让人重试，请求挂了就说实话。
+      if (request === transReqRef.current) showToast(aiFailText(e, providerId, "翻译没成功（模型这次没按格式返回），再点一次重试"));
     } finally {
       if (request === transReqRef.current) setTransBusy(false);
     }

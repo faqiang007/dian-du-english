@@ -35,7 +35,7 @@ export function QuizView({ app }) {
         <span className="ge huge">测</span>
         <h1 className="kai-h">三道题，测一测刚读的</h1>
         <p className="page-sub">{where}。两道考词，一道考理解。</p>
-        {quiz.st === "err" && <div className="callout bad">出题失败了，再试一次。</div>}
+        {quiz.st === "err" && <div className="callout bad">{quiz.errMsg || "出题失败了，再试一次。"}</div>}
         <div className="hall-a">
           <button className="btn pri lg" onClick={startQuiz} disabled={quiz.st === "loading"}>
             {quiz.st === "loading"
