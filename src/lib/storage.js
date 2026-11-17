@@ -40,8 +40,15 @@ export function trimHistory(list) {
   const out = [];
   let chars = 0;
   for (const h of list) {
+    if (out.length >= HISTORY_MAX) break;
     const n = (h.chapters || []).join("").length;
-    if (out.length >= HISTORY_MAX || chars + n > HISTORY_CHARS) break;
+    /* 第一条（最近的这篇）哪怕自己就超预算也要留下。
+       原来的写法是「放不下就 break」，而归档恰恰是最近这篇排在最前——
+       于是关掉一本 40 万字符以上的书（约 7 万词，常见的整本小说），
+       第一轮就 break，返回空数组，「读过的」连同以前攒的一起被清空。
+       宁可这一篇让总量超一点，也不能静默抹掉整份历史。
+       后面那些仍按原意「预算用完就停」——它们都比第一条更旧。 */
+    if (out.length > 0 && chars + n > HISTORY_CHARS) break;
     out.push(h);
     chars += n;
   }
