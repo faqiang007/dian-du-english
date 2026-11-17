@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LEVELS } from "./data/levels.js";
-import { FETCH_WORDS, MAX_DOC_CHARS, MAX_TABS } from "./data/limits.js";
+import { FETCH_WORDS, MAX_DOC_CHARS, MAX_TABS, STORAGE_CHARS } from "./data/limits.js";
 import { loadKeyMap, loadModelMap, loadProviderId, providerOf } from "./data/providers.js";
 import { THEMES } from "./data/themes.js";
 import { TOPIC_CATS, catOf } from "./data/topics.js";
@@ -1297,7 +1297,21 @@ ${curText}
   }
 
   /* ---- 导入材料 ---- */
-  function finishImport(art) {
+
+  /* 「抓网页」和「找真实文章」失败时该说什么。
+     这两条管线都会抛两类错误，必须分开讲，否则排查方向会被带偏：
+       业务失败（empty/nocite/thin/sourceMismatch）——真的没抓到内容，重试有意义
+       请求失败（KEY/CREDIT/RATE/NET/API…）——服务商那一层就挂了，
+           这时提示「把正文复制过来导入」「换个说法再试」全是误导：
+           Key 失效、余额不足时怎么重试都不会成功。所以这类一律交给 errText，
+           把服务商的原话照实说出来。 */
+  function fetchFailText(e, providerId) {
+    const code = e && e.message;
+    if (["empty", "nocite", "thin", "sourceMismatch", "net"].includes(code)) return "";
+    return errText(e, providerId);
+  }
+
+  function finishImport(art, warn) {
     if (!canOpenNewTab()) return;
     hardStop();
     const id = "t" + Date.now();
@@ -1318,11 +1332,13 @@ ${curText}
       return { ...st, total: (st.total || 0) + 1, log: { ...st.log, [d]: { ...day, a: (day.a || 0) + 1 } } };
     });
     window.scrollTo({ top: 0 });
-    showToast("导入成功，点单词即可查词");
+    // warn：导入本身成功了，但有件事得让人知道（比如编码不对、跳过了一些行）。
+    // 这种情况把警告顶上来而不是"导入成功"——成功是显然的，问题才需要看见。
+    showToast(warn || "导入成功，点单词即可查词");
     return true;
   }
 
-  function importFromText(raw, label) {
+  function importFromText(raw, label, warn) {
     const t = String(raw || "").trim();
     if (!t) { setImpErr("先把内容粘贴进来"); return; }
     const latin = (t.match(/[A-Za-z]/g) || []).length;
@@ -1331,14 +1347,34 @@ ${curText}
       setImpErr(`这份材料有 ${(t.length / 10000).toFixed(0)} 万字符，超过浏览器存储能放下的上限（约 ${MAX_DOC_CHARS / 10000} 万）。拆成几份分别导入吧`);
       return;
     }
+    /* 真到写完那一刻才发现存不下，是最难受的：文件读完了、分章也做完了，
+       结果弹一句「存储写满了」，人已经读完一半的期待全落空。先粗算一次
+       要占多少，把话说在前面——这个数按 1.05 倍估 JSON 转义的额外开销。 */
+    const needChars = Math.round(t.length * 1.05);
+    let usedChars = 0;
+    try {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith("dd-")) usedChars += (localStorage.getItem(k) || "").length;
+      }
+    } catch (e) { usedChars = 0; }
+    if (usedChars && usedChars + needChars > STORAGE_CHARS) {
+      const free = Math.max(0, STORAGE_CHARS - usedChars);
+      setImpErr(`浏览器存储快满了：这份材料约 ${(t.length / 10000).toFixed(0)} 万字符，但现在只剩约 ${(free / 10000).toFixed(0)} 万字符的空间。先关掉几篇打开的长文（关掉的会进「读过的」，不丢），或者把这份材料拆成几段分别导入`);
+      return;
+    }
 
     // 第一行像标题就摘出来当标题，剩下的正文再分章
     let title = "";
     let body = t;
     const firstLine = t.split("\n")[0].trim();
-    if (firstLine.length <= 70 && countWords(firstLine) <= 12 && t.includes("\n")) {
+    /* 编码读错的文件第一行常整行是「■■■」——拿它当标题，文章顶上就顶着一串
+       乱码。这种情况退回用文件名（label）当标题，正文照常能用。 */
+    const usableHead = firstLine && !/\uFFFD/.test(firstLine);
+    if (usableHead && firstLine.length <= 70 && countWords(firstLine) <= 12 && t.includes("\n")) {
       title = firstLine.replace(/[#*]+/g, "").trim();
       body = t.split("\n").slice(1).join("\n").trim() || t;
+    } else if (!usableHead && label) {
+      title = label.replace(/\.[^.]+$/, "");
     } else {
       title = t.split(/\s+/).slice(0, 8).join(" ") + "…";
     }
@@ -1352,7 +1388,7 @@ ${curText}
         ? `全文约 ${words} 词，已分成 ${chs.length} 章。查词、译文、小测都只针对当前这一章，读完一章点「下一章」继续`
         : "",
       topic: label, level, imported: true,
-    });
+    }, warn);
   }
 
   async function importFromUrl(rawUrl) {
@@ -1385,11 +1421,14 @@ ${curText}
       });
     } catch (e) {
       if (request !== importReqRef.current) return;
-      setImpErr(
+      // 请求层面的失败（Key 无效、余额不足、连不上）原样报出来，
+      // 别再叫人「复制正文粘贴」——那不是问题所在
+      const apiErr = fetchFailText(e, providerId);
+      setImpErr(apiErr || (
         e.message === "sourceMismatch"
           ? "没有拿到这个网址本身的可核对引用，不能把模型返回内容冒充为该页正文。请复制正文后用「粘贴文本」导入"
           : "没抓到这个页面的英文内容——最稳的办法：把正文（或视频字幕）复制过来，用「粘贴文本」导入"
-      );
+      ));
     } finally {
       if (request === importReqRef.current) setImpBusy(false);
     }
@@ -1459,13 +1498,15 @@ ${curText}
       });
     } catch (e) {
       if (request !== importReqRef.current) return;
-      setRealErr(
+      // 同上：Key 无效 / 余额不足 / 连不上时，「换个说法再试」是误导
+      const apiErr = fetchFailText(e, providerId);
+      setRealErr(apiErr || (
         e.message === "nocite"
           ? "这次没有真正联网搜索（没拿到任何搜索结果），拿不到可核对的出处，不予采用。再点一次试试；一直这样的话检查服务商是否支持联网"
           : e.message === "sourceMismatch"
             ? "模型给出的文章网址与搜索引用不一致，无法核对正文来源，未导入。请重试或换个主题"
           : "没搜到合适的真实文章。换个说法或换个分类再试；实在找不到就用「AI 现写」，但那是编的"
-      );
+      ));
     } finally {
       if (request === importReqRef.current) setRealBusy(false);
     }
@@ -1553,6 +1594,24 @@ ${curText}
     if (!f) return;
     setImpBusy(true);
     setImpErr("");
+
+    /* 先拦下「读进来必然是乱码」的格式。
+       以前只认 .docx/.epub，其余一律当纯文本读：老式 .doc 读出来是二进制
+       乱码，然后卡在下面的「看起来不是英文材料」——用户会以为是自己文件
+       内容不对，其实是格式不支持。在这里就说清楚该另存成什么。
+       PDF 是另一回事：它没坏，只是这个应用解析不了，得给一条能走的路。 */
+    const ext = (f.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
+    if ([".pdf"].includes(ext)) {
+      setImpBusy(false);
+      setImpErr("PDF 里的文字这个应用读不出来。最省事的办法：在浏览器里打开这个 PDF，全选（⌘A）复制，粘到「粘贴文本」里导入");
+      return;
+    }
+    if ([".doc", ".rtf", ".pages", ".odt", ".html", ".htm", ".azw", ".azw3", ".mobi"].includes(ext)) {
+      setImpBusy(false);
+      setImpErr(`读不了 ${ext} 这种格式。用 Word /  Pages 打开它，「另存为」.docx 再传；或者把正文复制出来用「粘贴文本」导入`);
+      return;
+    }
+
     try {
       let text = "";
       let name = f.name;
@@ -1569,7 +1628,36 @@ ${curText}
       } else {
         text = await f.text();
       }
-      importFromText(text, name);
+
+      /* 编码不对的文件（GBK / UTF-16 的 .txt 被当成 UTF-8 解）不会整个读不出来：
+         英文部分通常完好，只有非 ASCII 的字符变成 U+FFFD。以前这种文件会一路
+         通过，然后把第一个乱码行当成标题——正文好读，标题是一串「■■■」。
+         处理办法分两步：把整行都烂掉的行直接丢掉（它们只会变成一个空章节，
+         翻开是空白，比丢了还难受），剩下还能读的正文照常导入，提示一句让人
+         去另存为 UTF-8。 */
+      const bad = (text.match(/\uFFFD/g) || []).length;
+      let encWarn = "";
+      if (bad) {
+        encWarn = "文件编码不是 UTF-8，乱码的行已跳过。想要完整显示，用记事本另存为 UTF-8 再传";
+        text = text
+          .split("\n")
+          .filter((ln) => {
+            const junk = (ln.match(/\uFFFD/g) || []).length;
+            if (!junk) return true;
+            const solid = ln.replace(/\s/g, "").length || 1;
+            return junk / solid < 0.5;   // 过半是乱码 = 整行没用
+          })
+          .join("\n");
+        if (text.trim().split("\n")[0] && /\uFFFD/.test(text.split("\n")[0])) {
+          name = f.name.replace(/\.[^.]+$/, "");
+        }
+        if (!/[A-Za-z]{3}/.test(text)) {
+          setImpErr("这个文件读出来全是乱码（多半是 GBK 或 UTF-16 编码）。用记事本 / TextEdit 另存为 UTF-8 再传，或者直接把正文复制进来粘贴");
+          return;
+        }
+      }
+
+      importFromText(text, name, encWarn);
     } catch (err) {
       setImpErr(
         err.message === "epub"

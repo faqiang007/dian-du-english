@@ -14,3 +14,8 @@ export const FETCH_WORDS = 800;
    且要和生词本、统计、其他文章共用，所以给单篇留 150 万——
    约 25 万英文词，两本长篇小说的量。 */
 export const MAX_DOC_CHARS = 1500000;
+
+/* 浏览器 localStorage 的实测总量（Chrome，file://，二分法测出来 5,242,878）。
+   本应用所有 dd-* 键共用这一份，所以「还能不能再放一篇文章」要看它而不是
+   看 MAX_DOC_CHARS。留 5% 余量给同一次写入里的其他键。 */
+export const STORAGE_CHARS = 5000000;
