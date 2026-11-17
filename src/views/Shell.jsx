@@ -178,19 +178,7 @@ function Rail({ app, station, onOmni }) {
 
   return (
     <nav className="rail" aria-label="今日三格与导航">
-      {folded ? (
-        // 收起后只剩这一格：图标朝右，点是展开
-        <button className="rail-b rail-fold" onClick={fold} aria-label="展开左侧栏" title="展开左侧栏">
-          <PanelLeftOpen size={17} />
-        </button>
-      ) : (
-        <>
-          <button className="seal" onClick={goto.今} aria-label="007学英语 · 回到今天">007</button>
-          <button className="rail-fold" onClick={fold} aria-label="收起左侧栏" title="收起左侧栏">
-            <PanelLeftClose size={17} />
-          </button>
-        </>
-      )}
+      <button className="seal" onClick={goto.今} aria-label="007学英语 · 回到今天">007</button>
       <div className="rail-main">
         {cell("今")}
         <span className="rail-gap" />
@@ -200,6 +188,11 @@ function Rail({ app, station, onOmni }) {
         {cell("藏")}
       </div>
       <div className="rail-foot">
+        {/* 收起 / 展开是同一颗按钮：收起后整列隐身，只有它留在原位，所以两次点击在同一个地方 */}
+        <button className="rail-b rail-fold" onClick={fold}
+          aria-label={folded ? "展开左侧栏" : "收起左侧栏"} title={folded ? "展开左侧栏" : "收起左侧栏"}>
+          {folded ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        </button>
         <button className="rail-b" onClick={onOmni} aria-label="查词、找文章、导入（⌘K）" title="查词 / 找文章 / 导入  ⌘K">
           <Search size={18} />
         </button>
